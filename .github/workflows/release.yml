@@ -33,7 +33,7 @@ jobs:
         shell: pwsh
         run: |
           $tag = $env:GITHUB_REF_NAME
-          Compress-Archive -Path "CN-WoW Patcher.exe","README.md","logo_512.png","CNWoW.ico" -DestinationPath "CNWoW_Patcher-$tag.zip"
+          Compress-Archive -Path "CN-WoW Patcher.exe","README.md" -DestinationPath "CNWoW_Patcher-$tag.zip"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
