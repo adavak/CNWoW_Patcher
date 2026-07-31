@@ -29,7 +29,7 @@
 #define COL_ORANGE   RGB(0xE8,0x94,0x3A)
 #define COL_GRAY     RGB(0x5C,0x64,0x70)
 #define COL_GOLD     RGB(0xFF,0xD7,0x00)
-#define APP_VER  L"v1.2"
+#define APP_VER  L"v1.3"
 #define APP_AUTH L"Adavak"
 #define COL_DISABLED RGB(0x3A,0x40,0x4A)
 
