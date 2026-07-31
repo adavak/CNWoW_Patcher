@@ -27,7 +27,7 @@
 #define COL_ORANGE   RGB(0xE8,0x94,0x3A)
 #define COL_GRAY     RGB(0x5C,0x64,0x70)
 #define COL_GOLD     RGB(0xFF,0xD7,0x00)
-#define APP_VER  L"v1.1"
+#define APP_VER  L"v1.2"
 #define APP_AUTH L"Adavak"
 #define COL_DISABLED RGB(0x3A,0x40,0x4A)
 
@@ -53,6 +53,7 @@ static HBRUSH g_brBG, g_brPanel;
 static NOTIFYICONDATAW g_nid;
 static volatile BOOL g_gameRunning = FALSE;
 static volatile int g_lastValue = 11;
+static COLORREF g_hintColor = COL_ORANGE;
 static volatile int g_jackpot = 0;   
 static volatile BOOL g_logOpen = FALSE;
 static CRITICAL_SECTION g_logCS;
@@ -301,7 +302,7 @@ static LRESULT WINAPI OnCtlColor(HWND hwnd, HDC hdc, HWND child, int type) {
     int id = GetDlgCtrlID(child);
     SetBkMode(hdc, TRANSPARENT);
     if (id == IDC_STATUS_LBL || id == IDC_BNET_LBL || id == IDC_HINT_LBL || id == IDC_TOP_LBL || id == IDC_CHAOS_HINT) {
-        if (id == IDC_HINT_LBL) SetTextColor(hdc, COL_ORANGE);
+        if (id == IDC_HINT_LBL) SetTextColor(hdc, g_hintColor);
         else if (id == IDC_CHAOS_HINT) SetTextColor(hdc, COL_GOLD);
         else if (id == IDC_TOP_LBL) SetTextColor(hdc, COL_MUTED);
         else SetTextColor(hdc, COL_TEXT);
@@ -327,9 +328,11 @@ static void UpdateUI(void) {
     SetWindowTextW(g_lblBnet, bnet ? L"战网：运行中" : L"战网：未运行");
     SetDot(g_dotBnet, &g_bnetColor, bnet ? COL_GREEN : COL_GRAY);
     if (bnet) {
-        SetWindowTextW(g_lblHint, L"");
+        SetWindowTextW(g_lblHint, L"暂仅支持单进程，等待游戏完全退出后再启动");
+        g_hintColor = COL_GOLD;
     } else {
-        SetWindowTextW(g_lblHint, L"⚠ 战网未运行，可启动游戏但仅能查看登录界面");
+        SetWindowTextW(g_lblHint, L"⚠ 战网未运行，仅可查看登录界面");
+        g_hintColor = COL_ORANGE;
     }
     if (g_gameRunning) {
         if (g_jackpot == 1) {
@@ -445,7 +448,10 @@ static void LaunchGame(void) {
         return;
     }
     wchar_t cmd[1100];
-    swprintf(cmd, 1100, L"\"%ls\" -launcherlogin -uid wow", g_wowPath);
+    if (BattleNetRunning())
+        swprintf(cmd, 1100, L"\"%ls\" -launcherlogin -uid wow", g_wowPath);
+    else
+        swprintf(cmd, 1100, L"\"%ls\"", g_wowPath);
     wchar_t dir[1024]; wcscpy(dir, g_wowPath);
     wchar_t *slash = wcsrchr(dir, L'\\'); if (slash) *slash = 0;
     STARTUPINFOW si = { sizeof(si) };
@@ -503,17 +509,14 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         
         g_chkChaos = CreateWindowExW(0, L"BUTTON", L"混乱模式",
             WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, W - 165 - 19, 292, 165, 33, hwnd, (HMENU)IDC_CHAOS, NULL, NULL);
-        CreateWindowExW(0, L"STATIC", L"暂仅支持单进程，等待游戏完全退出后再启动",
-            WS_CHILD | WS_VISIBLE, 60, 296, W - 165 - 19 - 60 - 10, 26, hwnd, (HMENU)IDC_CHAOS_HINT, NULL, NULL);
-        HWND chaosHint = GetDlgItem(hwnd, IDC_CHAOS_HINT);
-        SendMessageW(chaosHint, WM_SETFONT, (WPARAM)g_fontSmall, TRUE);
+        
         SendMessageW(g_chkChaos, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
         Subclass(g_btnStart);
         Subclass(g_chkChaos);
 
         
-        g_lblHint = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_CENTER,
-            0, 340, W, 27, hwnd, (HMENU)IDC_HINT_LBL, NULL, NULL);
+        g_lblHint = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
+            30, 296, W - 184 - 40, 26, hwnd, (HMENU)IDC_HINT_LBL, NULL, NULL);
         SendMessageW(g_lblHint, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
 
         
