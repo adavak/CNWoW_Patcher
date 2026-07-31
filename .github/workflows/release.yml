@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup w64devkit
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/skeeto/w64devkit/releases/download/v2.9.0/w64devkit-x64-2.9.0.7z.exe" -OutFile w64devkit.exe
+          .\w64devkit.exe -y -oC:\w64devkit
+          echo "C:\w64devkit\w64devkit\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8
+
+      - name: Build
+        shell: pwsh
+        run: |
+          windres src/resource.rc -O coff -o resource.o
+          gcc -O2 -municode -finput-charset=UTF-8 -o "CN-WoW Patcher.exe" src/patcher.c resource.o -luser32 -lkernel32 -ladvapi32 -lshell32 -lcomctl32 -mwindows
+          Get-Item "CN-WoW Patcher.exe" | Select-Object Length
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          Compress-Archive -Path "CN-WoW Patcher.exe","README.md","logo_512.png","CNWoW.ico" -DestinationPath "CNWoW_Patcher-$tag.zip"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            CN-WoW Patcher.exe
+            CNWoW_Patcher-*.zip
+            logo_1024.png
+            logo_512.png
+            CNWoW.ico
