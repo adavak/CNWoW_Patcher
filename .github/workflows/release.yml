@@ -26,7 +26,7 @@ jobs:
         shell: pwsh
         run: |
           windres src/resource.rc -O coff -o resource.o
-          gcc -O2 -municode -finput-charset=UTF-8 -o "CN-WoW Patcher.exe" src/patcher.c resource.o -luser32 -lkernel32 -ladvapi32 -lshell32 -lcomctl32 -mwindows
+          gcc -O2 -municode -finput-charset=UTF-8 -o "CN-WoW Patcher.exe" src/patcher.c resource.o -luser32 -lkernel32 -ladvapi32 -lshell32 -lcomctl32 -lole32 -loleaut32 -lwbemuuid -mwindows
           Get-Item "CN-WoW Patcher.exe" | Select-Object Length
 
       - name: Package zip

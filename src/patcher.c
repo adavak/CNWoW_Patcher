@@ -15,6 +15,8 @@
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "wbemuuid.lib")
+#include <wbemidl.h>
 
 #define COL_BG       RGB(0x16,0x17,0x1D)
 #define COL_PANEL    RGB(0x1E,0x20,0x26)
@@ -66,6 +68,8 @@ static const unsigned char PREFIX[3] = { 0x64, 0x62, 0x96 };
 #define MAX_PROC 8
 static struct { DWORD pid; int target; int wasChaos; } g_targets[MAX_PROC];
 static int g_targetCount = 0;
+static DWORD g_done[MAX_PROC];
+static int g_doneN = 0;
 
 static const char *g_seq[] = { "up","up","down","down","left","right","left","right","b","a" };
 static wchar_t g_keyBuf[16];
@@ -90,6 +94,17 @@ static void LogMsg(const wchar_t *fmt, ...) {
         swprintf(g_logBuf[63], 160, L"%ls%ls", ts, line);
     }
     LeaveCriticalSection(&g_logCS);
+    {
+        FILE *lf = fopen("CNWoW_Patcher.log", "a");
+        if (lf) {
+            wchar_t out[220];
+            swprintf(out, 220, L"%ls%ls\n", ts, line);
+            char mb[440];
+            int n = WideCharToMultiByte(CP_UTF8, 0, out, -1, mb, 440, NULL, NULL);
+            if (n > 0) fwrite(mb, 1, n - 1, lf);
+            fclose(lf);
+        }
+    }
     if (g_logOpen && g_hwndLog) PostMessageW(g_hwndLog, WM_APP_LOG, 0, 0);
 }
 
@@ -186,59 +201,64 @@ static int ScanRegion(HANDLE h, unsigned char *buf, SIZE_T size, SIZE_T baseAddr
     return patched;
 }
 
+typedef struct { HANDLE h; unsigned char *base; SIZE_T size; int target; int result; } ScanJob;
+static DWORD WINAPI ScanWorker(LPVOID p) {
+    ScanJob *job = (ScanJob*)p;
+    job->result = 0;
+    for (SIZE_T off = 0; off < job->size; off += 4*1024*1024) {
+        SIZE_T chunk = min(4*1024*1024, job->size - off);
+        unsigned char *buf = malloc(chunk);
+        if (!buf) break;
+        SIZE_T read = 0;
+        if (ReadProcessMemory(job->h, job->base + off, buf, chunk, &read) && read > 0)
+            job->result += ScanRegion(job->h, buf, read, (SIZE_T)(job->base + off), job->target);
+        free(buf);
+    }
+    return 0;
+}
 static int PatchPid(DWORD pid, int target) {
     HANDLE h = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_WRITE, FALSE, pid);
     if (!h) return 0;
-    int total = 0;
+    ScanJob jobs[512];
+    int nj = 0;
     unsigned char *addr = NULL;
     MEMORY_BASIC_INFORMATION mbi;
-    while (VirtualQueryEx(h, addr, &mbi, sizeof(mbi))) {
+    while (VirtualQueryEx(h, addr, &mbi, sizeof(mbi)) && nj < 512) {
         SIZE_T base = (SIZE_T)mbi.BaseAddress;
         SIZE_T size = mbi.RegionSize;
         addr = (unsigned char*)(base + size);
         if (mbi.State != MEM_COMMIT || mbi.Type != MEM_PRIVATE) continue;
         if (!(mbi.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY))) continue;
-        for (SIZE_T off = 0; off < size; off += 4*1024*1024) {
-            SIZE_T chunk = min(4*1024*1024, size - off);
-            unsigned char *buf = malloc(chunk);
-            if (!buf) break;
-            SIZE_T read = 0;
-            if (ReadProcessMemory(h, (BYTE*)(base + off), buf, chunk, &read) && read > 0)
-                total += ScanRegion(h, buf, read, base + off, target);
-            free(buf);
-        }
+        jobs[nj].h = h;
+        jobs[nj].base = (unsigned char*)base;
+        jobs[nj].size = size;
+        jobs[nj].target = target;
+        jobs[nj].result = 0;
+        nj++;
+    }
+    int total = 0;
+    const int NT = 4;
+    for (int i = 0; i < nj; i += NT) {
+        HANDLE th[NT];
+        int nt = 0;
+        for (int t = 0; t < NT && i + t < nj; t++)
+            th[nt++] = CreateThread(NULL, 0, ScanWorker, &jobs[i + t], 0, NULL);
+        WaitForMultipleObjects(nt, th, TRUE, INFINITE);
+        for (int t = 0; t < nt; t++) { CloseHandle(th[t]); total += jobs[i + t].result; }
     }
     CloseHandle(h);
     return total;
 }
-
+static DWORD g_lastVerify = 0;
 static void PatchAll(void) {
     DWORD pids[8];
     int n = FindProcesses(IsWowName, pids, 8);
-    if (n == 0) { g_gameRunning = FALSE; g_targetCount = 0; return; }
+    if (n == 0) { g_gameRunning = FALSE; g_targetCount = 0; g_doneN = 0; return; }
     g_gameRunning = TRUE;
-
     BOOL chaos = (SendMessageW(g_chkChaos, BM_GETCHECK, 0, 0) == BST_CHECKED);
-
-    
-    for (int i = 0; i < n; i++) {
-        int j;
-        for (j = 0; j < g_targetCount; j++)
-            if (g_targets[j].pid == pids[i]) break;
-        if (j == g_targetCount) {
-            if (g_targetCount < MAX_PROC) {
-                g_targets[g_targetCount].pid = pids[i];
-                g_targets[g_targetCount].target = chaos ? (rand() % 12) : 11;
-                g_targets[g_targetCount].wasChaos = chaos;
-                g_targetCount++;
-            }
-        } else if (g_targets[j].wasChaos != chaos) {
-            
-            g_targets[j].target = chaos ? (rand() % 12) : 11;
-            g_targets[j].wasChaos = chaos;
-        }
-    }
-    
+    DWORD now = GetTickCount();
+    BOOL verify = (now - g_lastVerify > 3000);
+    if (verify) g_lastVerify = now;
     int w = 0;
     for (int i = 0; i < g_targetCount; i++) {
         BOOL alive = FALSE;
@@ -246,13 +266,41 @@ static void PatchAll(void) {
         if (alive) g_targets[w++] = g_targets[i];
     }
     g_targetCount = w;
-
+    w = 0;
+    for (int i = 0; i < g_doneN; i++) {
+        BOOL alive = FALSE;
+        for (int j = 0; j < n; j++) if (g_done[i] == pids[j]) { alive = TRUE; break; }
+        if (alive) g_done[w++] = g_done[i];
+    }
+    g_doneN = w;
+    for (int i = 0; i < n; i++) {
+        int j;
+        for (j = 0; j < g_targetCount; j++) if (g_targets[j].pid == pids[i]) break;
+        if (j == g_targetCount && g_targetCount < MAX_PROC) {
+            g_targets[g_targetCount].pid = pids[i];
+            g_targets[g_targetCount].target = chaos ? (rand() % 12) : 11;
+            g_targets[g_targetCount].wasChaos = chaos;
+            g_targetCount++;
+        }
+    }
     int total = 0, lastVal = 11, jp = 0;
     for (int i = 0; i < g_targetCount; i++) {
-        int c = PatchPid(g_targets[i].pid, g_targets[i].target);
-        if (c > 0) {
-            total += c;
-            LogMsg(L"pid %lu: 已修改 %d 处 → 值 %d", g_targets[i].pid, c, g_targets[i].target);
+        BOOL need = FALSE;
+        if (g_targets[i].wasChaos != chaos) {
+            g_targets[i].target = chaos ? (rand() % 12) : 11;
+            g_targets[i].wasChaos = chaos;
+            need = TRUE;
+        }
+        BOOL done = FALSE;
+        for (int d = 0; d < g_doneN; d++) if (g_done[d] == g_targets[i].pid) { done = TRUE; break; }
+        if (!done) need = TRUE;
+        if (need || (verify && done)) {
+            int c = PatchPid(g_targets[i].pid, g_targets[i].target);
+            if (c > 0) {
+                total += c;
+                LogMsg(L"pid %lu: 已修改 %d 处 → 值 %d", g_targets[i].pid, c, g_targets[i].target);
+                if (g_doneN < MAX_PROC) g_done[g_doneN++] = g_targets[i].pid;
+            }
         }
         if (g_targets[i].target == 6) jp = 1;
         else if (g_targets[i].target == 2) jp = 2;
@@ -266,35 +314,6 @@ static void PatchAll(void) {
     if (jp == 3) LogMsg(L"光源远征了…");
     PostMessageW(g_hwnd, WM_PATCH_DONE, 0, 0);
 }
-
-static DWORD WINAPI PatcherThread(LPVOID p) {
-    srand((unsigned)time(NULL));
-    DWORD lastPids[8]; int lastN = 0;
-    while (g_thrRunning) {
-        DWORD pids[8];
-        int n = FindProcesses(IsWowName, pids, 8);
-        if (n > 0) {
-            for (int i = 0; i < n; i++) {
-                BOOL existed = FALSE;
-                for (int j = 0; j < lastN; j++) if (lastPids[j] == pids[i]) { existed = TRUE; break; }
-                if (!existed) LogMsg(L"检测到游戏进程 (pid %lu)", pids[i]);
-            }
-            PatchAll();
-            memcpy(lastPids, pids, n * sizeof(DWORD));
-            lastN = n;
-            Sleep(400);
-        } else {
-            if (lastN > 0) LogMsg(L"游戏进程已退出");
-            lastN = 0; g_targetCount = 0;
-            g_gameRunning = FALSE;
-            g_jackpot = 0;
-            PostMessageW(g_hwnd, WM_PATCH_DONE, 0, 0);
-            Sleep(100);
-        }
-    }
-    return 0;
-}
-
 static void TrayShow(void) { Shell_NotifyIconW(NIM_ADD, &g_nid); }
 static void TrayHide(void) { Shell_NotifyIconW(NIM_DELETE, &g_nid); }
 
@@ -314,14 +333,72 @@ static LRESULT WINAPI OnCtlColor(HWND hwnd, HDC hdc, HWND child, int type) {
     }
     return DefWindowProcW(hwnd, WM_CTLCOLORBTN, (WPARAM)hdc, (LPARAM)child);
 }
-
 static COLORREF g_bnetColor = COL_GRAY, g_statusColor = COL_GRAY;
-
 static void SetDot(HWND dot, COLORREF *store, COLORREF c) {
     *store = c;
     InvalidateRect(dot, NULL, TRUE);
 }
-
+static DWORD WINAPI WmiThread(LPVOID p) {
+    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    if (SUCCEEDED(hr)) {
+        hr = CoInitializeSecurity(NULL, -1, NULL, NULL, RPC_C_AUTHN_LEVEL_DEFAULT,
+                                  RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_NONE, NULL);
+    }
+    IWbemLocator *loc = NULL;
+    IWbemServices *svc = NULL;
+    IEnumWbemClassObject *en = NULL;
+    BSTR ns = SysAllocString(L"ROOT\\CIMV2");
+    BSTR q = SysAllocString(L"SELECT * FROM Win32_ProcessStartTrace WHERE ProcessName='Wow.exe' OR ProcessName='wow.exe' OR ProcessName='wowclassic.exe'");
+    BSTR wql = SysAllocString(L"WQL");
+    BOOL wmiOK = FALSE;
+    if (SUCCEEDED(CoCreateInstance(&CLSID_WbemLocator, 0, CLSCTX_INPROC_SERVER, &IID_IWbemLocator, (LPVOID*)&loc)) &&
+        SUCCEEDED(loc->lpVtbl->ConnectServer(loc, ns, NULL, NULL, 0, 0, NULL, NULL, &svc)) &&
+        SUCCEEDED(svc->lpVtbl->ExecNotificationQuery(svc, wql, q, WBEM_FLAG_FORWARD_ONLY, NULL, &en))) {
+        wmiOK = TRUE;
+    }
+    if (!wmiOK) {
+        while (g_thrRunning) {
+            DWORD pids[8];
+            int n = FindProcesses(IsWowName, pids, 8);
+            if (n > 0) {
+                PatchAll();
+                Sleep(100);
+            } else {
+                if (g_gameRunning) { g_gameRunning = FALSE; g_targetCount = 0; g_doneN = 0; }
+                Sleep(500);
+            }
+        }
+        if (en) en->lpVtbl->Release(en);
+        if (svc) svc->lpVtbl->Release(svc);
+        if (loc) loc->lpVtbl->Release(loc);
+        SysFreeString(ns); SysFreeString(q); SysFreeString(wql);
+        if (SUCCEEDED(hr)) CoUninitialize();
+        return 0;
+    }
+    while (g_thrRunning) {
+        IWbemClassObject *obj = NULL;
+        ULONG got = 0;
+        HRESULT hr2 = en->lpVtbl->Next(en, 3000, 1, &obj, &got);
+        if (hr2 == WBEM_S_NO_ERROR && got) {
+            VARIANT v;
+            VariantInit(&v);
+            if (SUCCEEDED(obj->lpVtbl->Get(obj, L"ProcessID", 0, &v, 0, 0)) && v.vt == VT_I4) {
+                LogMsg(L"检测到游戏进程 (pid %lu)", (unsigned long)v.lVal);
+            }
+            VariantClear(&v);
+            obj->lpVtbl->Release(obj);
+            PatchAll();
+        } else if (hr2 == WBEM_S_TIMEDOUT) {
+            PatchAll();
+        }
+    }
+    en->lpVtbl->Release(en);
+    svc->lpVtbl->Release(svc);
+    loc->lpVtbl->Release(loc);
+    SysFreeString(ns); SysFreeString(q); SysFreeString(wql);
+    if (SUCCEEDED(hr)) CoUninitialize();
+    return 0;
+}
 static void UpdateUI(void) {
     if (!g_hwnd) return;
     BOOL bnet = BattleNetRunning();
@@ -535,7 +612,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
         }
         InitializeCriticalSection(&g_logCS);
-        CreateThread(NULL, 0, PatcherThread, NULL, 0, NULL);
+        CreateThread(NULL, 0, WmiThread, NULL, 0, NULL);
         SetTimer(hwnd, 1, 500, NULL);
         return 0;
     }
