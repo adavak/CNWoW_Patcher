@@ -27,6 +27,8 @@
 #define COL_ORANGE   RGB(0xE8,0x94,0x3A)
 #define COL_GRAY     RGB(0x5C,0x64,0x70)
 #define COL_GOLD     RGB(0xFF,0xD7,0x00)
+#define APP_VER  L"v1.1"
+#define APP_AUTH L"Adavak"
 #define COL_DISABLED RGB(0x3A,0x40,0x4A)
 
 #define IDC_BNET_DOT   1001
@@ -522,7 +524,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
         g_nid.uCallbackMessage = WM_TRAYICON;
         g_nid.hIcon = LoadIconW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(1));
-        wcscpy(g_nid.szTip, L"CN-WoW Patcher");
+        wcscpy(g_nid.szTip, L"CN-WoW Patcher   " APP_VER L"   Author: " APP_AUTH);
 
         {
             HICON hIcon = LoadIconW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(1));
@@ -702,7 +704,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrev, LPWSTR lpCmd, int nShow) {
     wc2.lpszClassName = L"CNWoWPatcherLog";
     RegisterClassW(&wc2);
 
-    HWND hwnd = CreateWindowExW(0, L"CNWoWPatcherMain", L"CN-WoW Patcher   v1.1   Author: Adavak",
+    HWND hwnd = CreateWindowExW(0, L"CNWoWPatcherMain", L"CN-WoW Patcher   " APP_VER L"   Author: " APP_AUTH,
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT, 720, 400, NULL, NULL, hInst, NULL);
     if (!hwnd) return 0;

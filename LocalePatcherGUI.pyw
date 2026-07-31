@@ -41,6 +41,8 @@ ORANGE = "#e8943a"
 GRAY = "#5c6470"
 GOLD = "#ffd700"
 FONT = "Segoe UI"
+APP_VER = "v1.1"
+APP_AUTHOR = "Adavak"
 PREFIX = b"\x64\x62\x96"
 KEY_SEQ = ("up", "up", "down", "down", "left", "right", "left", "right", "b", "a")
 WORD_WANT = "whosyourdaddy"
@@ -193,7 +195,7 @@ def patch_all(targets):
 class App:
     def __init__(self, root):
         self.root = root
-        root.title("CN-WoW Patcher   v1.1   Author: Adavak")
+        root.title("CN-WoW Patcher   " + APP_VER + "   Author: " + APP_AUTHOR)
         root.resizable(False, False)
         root.configure(bg=BG)
         try:
@@ -283,7 +285,7 @@ class App:
         d.text((14, 8), "12", font=ImageFont.truetype(r"C:\Windows\Fonts\segoeuib.ttf", 40),
                fill=(255, 255, 255, 255))
         return pystray.Icon(
-            "wow_locale_patcher", img, "CN-WoW Patcher   v1.1   Author: Adavak",
+            "wow_locale_patcher", img, "CN-WoW Patcher   " + APP_VER + "   Author: " + APP_AUTHOR,
             pystray.Menu(
                 pystray.MenuItem("显示窗口", self.show_window, default=True),
                 pystray.MenuItem("彻底退出", self.quit_app),
