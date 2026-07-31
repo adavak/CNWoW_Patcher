@@ -42,6 +42,3 @@ jobs:
           files: |
             CN-WoW Patcher.exe
             CNWoW_Patcher-*.zip
-            logo_1024.png
-            logo_512.png
-            CNWoW.ico
