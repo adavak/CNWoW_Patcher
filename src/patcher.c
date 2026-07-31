@@ -56,6 +56,7 @@ static NOTIFYICONDATAW g_nid;
 static volatile BOOL g_gameRunning = FALSE;
 static volatile int g_lastValue = 11;
 static COLORREF g_hintColor = COL_ORANGE;
+static wchar_t g_logPath[1100] = L"CNWoW_Patcher.log";
 static volatile int g_jackpot = 0;   
 static volatile BOOL g_logOpen = FALSE;
 static CRITICAL_SECTION g_logCS;
@@ -94,17 +95,6 @@ static void LogMsg(const wchar_t *fmt, ...) {
         swprintf(g_logBuf[63], 160, L"%ls%ls", ts, line);
     }
     LeaveCriticalSection(&g_logCS);
-    {
-        FILE *lf = fopen("CNWoW_Patcher.log", "a");
-        if (lf) {
-            wchar_t out[220];
-            swprintf(out, 220, L"%ls%ls\n", ts, line);
-            char mb[440];
-            int n = WideCharToMultiByte(CP_UTF8, 0, out, -1, mb, 440, NULL, NULL);
-            if (n > 0) fwrite(mb, 1, n - 1, lf);
-            fclose(lf);
-        }
-    }
     if (g_logOpen && g_hwndLog) PostMessageW(g_hwndLog, WM_APP_LOG, 0, 0);
 }
 
