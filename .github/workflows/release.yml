@@ -40,5 +40,4 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            CN-WoW Patcher.exe
             CNWoW_Patcher-*.zip
