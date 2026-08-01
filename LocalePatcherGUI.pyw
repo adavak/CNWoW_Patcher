@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+
 import ctypes
 import ctypes.wintypes as wt
 import threading
@@ -31,7 +32,6 @@ BATTLE_NET_NAMES = ("battle.net.exe", "battle.net")
 
 BG = "#16171d"
 PANEL = "#1e2026"
-PANEL_LN = "#2a2d35"
 TEXT = "#f8f8f8"
 MUTED = "#8f96a3"
 ACCENT = "#0074e0"
@@ -40,13 +40,12 @@ GREEN = "#35c47a"
 ORANGE = "#e8943a"
 GRAY = "#5c6470"
 GOLD = "#ffd700"
-FONT = "Segoe UI"
+FONT = ("Segoe UI", "Microsoft YaHei UI")
 APP_VER = "v1.3"
 APP_AUTHOR = "Adavak"
 PREFIX = b"\x64\x62\x96"
 KEY_SEQ = ("up", "up", "down", "down", "left", "right", "left", "right", "b", "a")
 WORD_WANT = "whosyourdaddy"
-
 
 class MEMORY_BASIC_INFORMATION(ctypes.Structure):
     _fields_ = [
@@ -56,14 +55,12 @@ class MEMORY_BASIC_INFORMATION(ctypes.Structure):
         ("Protect", wt.DWORD), ("Type", wt.DWORD),
     ]
 
-
 class PROCESSENTRY32(ctypes.Structure):
     _fields_ = [("dwSize", wt.DWORD), ("cntUsage", wt.DWORD), ("th32ProcessID", wt.DWORD),
                 ("th32DefaultHeapID", ctypes.c_void_p), ("th32ModuleID", wt.DWORD),
                 ("cntThreads", wt.DWORD), ("th32ParentProcessID", wt.DWORD),
                 ("pcPriClassBase", ctypes.c_long), ("dwFlags", wt.DWORD),
                 ("szExeFile", ctypes.c_wchar * 260)]
-
 
 def find_processes(names):
     pids = []
@@ -81,10 +78,8 @@ def find_processes(names):
     k32.CloseHandle(snap)
     return pids
 
-
 def battle_net_running():
     return bool(find_processes(BATTLE_NET_NAMES))
-
 
 def detect_wow_path():
     for pid in find_processes(("wow.exe", "wow", "wowclassic.exe")):
@@ -121,7 +116,6 @@ def detect_wow_path():
         pass
     return None
 
-
 def get_private_regions(h):
     regions = []
     addr = 0
@@ -141,7 +135,6 @@ def get_private_regions(h):
             continue
         regions.append((base, size))
     return regions
-
 
 def scan_region(h, base, size, target):
     patched = 0
@@ -170,7 +163,6 @@ def scan_region(h, base, size, target):
         off += chunk
     return patched
 
-
 def patch_all(targets):
     results = []
     for pid in find_processes(("wow.exe", "wow", "wowclassic.exe")):
@@ -191,19 +183,13 @@ def patch_all(targets):
             k32.CloseHandle(h)
     return results
 
-
 class App:
     def __init__(self, root):
         self.root = root
         root.title("CN-WoW Patcher   " + APP_VER + "   Author: " + APP_AUTHOR)
         root.resizable(False, False)
+        root.tk.call("tk", "scaling", 1.333)
         root.configure(bg=BG)
-        try:
-            ico = os.path.join(os.path.dirname(os.path.abspath(__file__)), "CNWoW.ico")
-            if os.path.isfile(ico):
-                root.iconbitmap(ico)
-        except Exception:
-            pass
 
         self.game_running = False
         self.patched = 0
@@ -216,52 +202,43 @@ class App:
         self.key_buf = []
         self.word_buf = []
 
-        tk.Label(root, text="通过战网或点击下面按钮启动游戏", font=(FONT, 9),
-                 bg=BG, fg=MUTED).pack(padx=22, pady=(16, 6))
+        root.geometry("464x228")
 
-        bnet_row = tk.Frame(root, bg=PANEL)
-        bnet_row.pack(fill="x", padx=22)
-        self.bnet_dot = tk.Canvas(bnet_row, width=12, height=12, bg=PANEL, highlightthickness=0)
-        self.bnet_dot.pack(side="left", padx=(14, 8), pady=9)
-        self.bnet_dot_id = self.bnet_dot.create_oval(2, 2, 10, 10, fill=GRAY, outline="")
+        tk.Label(root, text="通过战网或点击下面按钮启动游戏", font=(FONT, -12),
+                 bg=BG, fg=MUTED).place(relx=0.5, y=14, anchor="n", width=464, height=20)
+
+        self.bnet_dot = tk.Canvas(root, width=12, height=12, bg=BG, highlightthickness=0)
+        self.bnet_dot.place(x=20, y=50)
+        self.bnet_dot_id = self.bnet_dot.create_oval(1, 1, 11, 11, fill=GRAY, outline="")
         self.bnet_var = tk.StringVar(value="战网：检测中…")
-        tk.Label(bnet_row, textvariable=self.bnet_var, font=(FONT, 10),
-                 bg=PANEL, fg=TEXT).pack(side="left")
+        tk.Label(root, textvariable=self.bnet_var, font=(FONT, -14),
+                 bg=BG, fg=TEXT, anchor="w").place(x=40, y=46, width=200, height=20)
 
         self.start_btn = tk.Button(root, text="▶  进入游戏",
-                                   font=(FONT, 12, "bold"),
+                                   font=(FONT, -16, "bold"),
                                    bg=ACCENT, fg="white", activebackground=ACCENT_H,
                                    activeforeground="white", relief="flat", bd=0,
                                    cursor="hand2", padx=10, pady=12)
-        self.start_btn.pack(fill="x", padx=22, pady=14)
+        self.start_btn.place(x=40, y=76, width=400, height=46)
         self.start_btn.bind("<Enter>", lambda e: self.start_btn.config(bg=ACCENT_H))
         self.start_btn.bind("<Leave>", lambda e: self.start_btn.config(bg=ACCENT))
         self.start_btn.config(command=self.launch_game)
 
-        self.view_hint = tk.Label(root, text="", font=(FONT, 9), bg=BG, fg=ORANGE)
-        self.view_hint.pack(padx=24, pady=(4, 0), anchor="w")
-
-        status_panel = tk.Frame(root, bg=PANEL)
-        status_panel.pack(fill="x", padx=22)
-        self.status_dot = tk.Canvas(status_panel, width=12, height=12, bg=PANEL, highlightthickness=0)
-        self.status_dot.pack(side="left", padx=(14, 8), pady=12)
-        self.status_dot_id = self.status_dot.create_oval(2, 2, 10, 10, fill=GRAY, outline="")
+        self.status_dot = tk.Canvas(root, width=12, height=12, bg=BG, highlightthickness=0)
+        self.status_dot.place(x=20, y=138)
+        self.status_dot_id = self.status_dot.create_oval(1, 1, 11, 11, fill=GRAY, outline="")
         self.status_var = tk.StringVar(value="等待游戏启动…")
-        tk.Label(status_panel, textvariable=self.status_var, font=(FONT, 11, "bold"),
-                 bg=PANEL, fg=TEXT).pack(side="left")
+        tk.Label(root, textvariable=self.status_var, font=(FONT, -14),
+                 bg=BG, fg=TEXT, anchor="w").place(x=40, y=134, width=400, height=20)
 
-        opt_row = tk.Frame(root, bg=BG)
-        opt_row.pack(fill="x", padx=24, pady=(2, 0))
         self.chaos_var = tk.BooleanVar(value=False)
-        chaos_cb = tk.Checkbutton(opt_row, text="混乱模式", variable=self.chaos_var,
+        chaos_cb = tk.Checkbutton(root, text="混乱模式", variable=self.chaos_var,
                                   bg=BG, fg=TEXT, activebackground=BG, activeforeground=ACCENT_H,
-                                  selectcolor=PANEL, font=(FONT, 9), cursor="hand2")
-        chaos_cb.pack(side="right")
-        tk.Label(opt_row, text="暂仅支持单进程，等待游戏完全退出后再启动",
-                 font=(FONT, 9), bg=BG, fg=GOLD).pack(side="right", padx=(0, 12))
+                                  selectcolor=PANEL, font=(FONT, -14), cursor="hand2")
+        chaos_cb.place(x=357, y=195, width=110, height=22)
 
-        tk.Label(root, text="关闭窗口将隐藏到右下角托盘，右键托盘图标可彻底退出",
-                 font=(FONT, 8), bg=BG, fg=MUTED).pack(padx=22, pady=(8, 14), anchor="w")
+        self.hint_lbl = tk.Label(root, text="", font=(FONT, -14), bg=BG, fg=GOLD, anchor="w")
+        self.hint_lbl.place(x=20, y=197, width=331, height=17)
 
         self.log_text = None
         self.log_win = None
@@ -363,7 +340,7 @@ class App:
         self.log_win.configure(bg=PANEL)
         self.log_win.protocol("WM_DELETE_WINDOW", self.close_log_win)
         self.log_text = tk.Text(self.log_win, width=60, height=20, bg=PANEL, fg=TEXT,
-                                font=(FONT, 9), state="disabled", relief="flat", bd=0)
+                                font=(FONT, -14), state="disabled", relief="flat", bd=0)
         self.log_text.pack(padx=8, pady=8)
         self.append_log("秘籍生效！Log 模式开启")
 
@@ -388,11 +365,11 @@ class App:
         if battle_net_running():
             self.bnet_var.set("战网：运行中")
             self.bnet_dot.itemconfig(self.bnet_dot_id, fill=GREEN)
-            self.view_hint.config(text="")
+            self.hint_lbl.config(text="暂仅支持单进程，等待游戏完全退出后再启动", fg=GOLD)
         else:
             self.bnet_var.set("战网：未运行")
             self.bnet_dot.itemconfig(self.bnet_dot_id, fill=GRAY)
-            self.view_hint.config(text="⚠ 战网未运行，可启动游戏但仅能查看登录界面")
+            self.hint_lbl.config(text="⚠ 战网未运行，仅可查看登录界面", fg=ORANGE)
 
         if self.game_running:
             if self.jackpot == 1:
@@ -413,7 +390,6 @@ class App:
         self.root.after(200, self.refresh_ui)
 
     def tick(self):
-        """单次检测 + patch（WMI 事件循环与轮询回退共用）"""
         pids = set(find_processes(("wow.exe", "wow", "wowclassic.exe")))
         self.game_running = bool(pids)
         new_pids = pids - self.last_pids
@@ -459,7 +435,6 @@ class App:
             self.jackpot = 0
 
     def _wmi_watcher(self):
-        """WMI 事件订阅（对齐 C 版 v1.3）：Win32_ProcessStartTrace 事件驱动；失败返回 None 走轮询回退"""
         try:
             import pythoncom
             import win32com.client
@@ -496,12 +471,10 @@ class App:
             except Exception:
                 time.sleep(1)
 
-
 def main():
     root = tk.Tk()
     App(root)
     root.mainloop()
-
 
 if __name__ == "__main__":
     main()
