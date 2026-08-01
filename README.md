@@ -31,7 +31,7 @@ gcc -O2 -municode -finput-charset=UTF-8 -o "CN-WoW Patcher.exe" src/patcher.c \
 
 - `src/patcher.c` — C 源码（Win32 GUI，约 700 行）
 - `CN-WoW Patcher.exe` — 编译产物（不在仓库，由 GitHub Actions 自动构建，从 Releases 下载）
-- `LocalePatcherGUI.pyw` — Python/tkinter 版本（参考，需要 Python 3 + pystray + pillow + pywin32；WMI 事件驱动侦测游戏启动，非管理员自动回退轮询）
+- `CN-WoW Patcher.pyw` — Python/tkinter 版本（参考，需要 Python 3 + pystray + pillow + pywin32；WMI 事件驱动侦测游戏启动，非管理员自动回退轮询）
 
 ## 技术要点
 
