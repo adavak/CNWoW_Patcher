@@ -412,54 +412,87 @@ class App:
             self.status_dot.itemconfig(self.status_dot_id, fill=GRAY)
         self.root.after(200, self.refresh_ui)
 
+    def tick(self):
+        """单次检测 + patch（WMI 事件循环与轮询回退共用）"""
+        pids = set(find_processes(("wow.exe", "wow", "wowclassic.exe")))
+        self.game_running = bool(pids)
+        new_pids = pids - self.last_pids
+        for pid in new_pids:
+            self.append_log("检测到游戏进程 (pid %d)" % pid)
+        if pids:
+            if self.chaos_var.get():
+                for pid in pids:
+                    if pid not in self.targets:
+                        self.targets[pid] = random.randint(0, 11)
+                self.targets = {p: t for p, t in self.targets.items() if p in pids}
+            else:
+                self.targets = {p: 11 for p in pids}
+            res = patch_all(self.targets)
+            if res:
+                for pid, cnt, val in res:
+                    if cnt:
+                        self.append_log("pid %d: 已修改 %d 处 → 值 %d" % (pid, cnt, val))
+                self.patched = sum(r[1] for r in res)
+                self.last_value = res[-1][2]
+                jp = 0
+                for pid, cnt, val in res:
+                    if val == 6:
+                        jp = 1
+                    elif val == 2:
+                        jp = 2
+                    elif val == 1:
+                        jp = 3
+                self.jackpot = jp
+                if jp == 1:
+                    self.append_log("你中奖了！扎昆守护着你！")
+                elif jp == 2:
+                    self.append_log("龙飞走了，堡垒化了…")
+                elif jp == 3:
+                    self.append_log("光源远征了…")
+            self.last_pids = pids
+        else:
+            if self.last_pids:
+                self.append_log("游戏进程已退出")
+            self.last_pids = set()
+            self.patched = 0
+            self.targets = {}
+            self.jackpot = 0
+
+    def _wmi_watcher(self):
+        """WMI 事件订阅（对齐 C 版 v1.3）：Win32_ProcessStartTrace 事件驱动；失败返回 None 走轮询回退"""
+        try:
+            import pythoncom
+            import win32com.client
+            pythoncom.CoInitialize()
+            wmi = win32com.client.GetObject("winmgmts:\\\\.\\root\\cimv2")
+            q = ("SELECT * FROM Win32_ProcessStartTrace WHERE "
+                 "ProcessName='Wow.exe' OR ProcessName='wow.exe' OR ProcessName='wowclassic.exe'")
+            return wmi.ExecNotificationQuery(q)
+        except Exception as e:
+            self.append_log("WMI 不可用，回退轮询模式 (%s)" % e)
+            return None
+
     def patcher_loop(self):
+        watcher = self._wmi_watcher()
+        if watcher is not None:
+            while True:
+                try:
+                    try:
+                        evt = watcher.NextEvent(3000)
+                    except Exception:
+                        evt = None
+                        time.sleep(1)
+                    if evt is not None:
+                        pid = getattr(evt, "ProcessID", None)
+                        if pid:
+                            self.append_log("WMI 事件: 游戏进程已启动 (pid %d)" % pid)
+                except Exception:
+                    time.sleep(1)
+                self.tick()
         while True:
             try:
-                pids = set(find_processes(("wow.exe", "wow", "wowclassic.exe")))
-                self.game_running = bool(pids)
-                new_pids = pids - self.last_pids
-                for pid in new_pids:
-                    self.append_log("检测到游戏进程 (pid %d)" % pid)
-                if pids:
-                    if self.chaos_var.get():
-                        for pid in pids:
-                            if pid not in self.targets:
-                                self.targets[pid] = random.randint(0, 11)
-                        self.targets = {p: t for p, t in self.targets.items() if p in pids}
-                    else:
-                        self.targets = {p: 11 for p in pids}
-                    res = patch_all(self.targets)
-                    if res:
-                        for pid, cnt, val in res:
-                            if cnt:
-                                self.append_log("pid %d: 已修改 %d 处 → 值 %d" % (pid, cnt, val))
-                        self.patched = sum(r[1] for r in res)
-                        self.last_value = res[-1][2]
-                        jp = 0
-                        for pid, cnt, val in res:
-                            if val == 6:
-                                jp = 1
-                            elif val == 2:
-                                jp = 2
-                            elif val == 1:
-                                jp = 3
-                        self.jackpot = jp
-                        if jp == 1:
-                            self.append_log("你中奖了！扎昆守护着你！")
-                        elif jp == 2:
-                            self.append_log("龙飞走了，堡垒化了…")
-                        elif jp == 3:
-                            self.append_log("光源远征了…")
-                    self.last_pids = pids
-                    time.sleep(0.4)
-                else:
-                    if self.last_pids:
-                        self.append_log("游戏进程已退出")
-                    self.last_pids = set()
-                    self.patched = 0
-                    self.targets = {}
-                    self.jackpot = 0
-                    time.sleep(0.1)
+                self.tick()
+                time.sleep(0.4 if self.game_running else 0.1)
             except Exception:
                 time.sleep(1)
 
