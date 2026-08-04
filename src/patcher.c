@@ -29,7 +29,7 @@
 #define COL_ORANGE   RGB(0xE8,0x94,0x3A)
 #define COL_GRAY     RGB(0x5C,0x64,0x70)
 #define COL_GOLD     RGB(0xFF,0xD7,0x00)
-#define APP_VER  L"v1.3"
+#define APP_VER  L"v1.4"
 #define APP_AUTH L"Adavak"
 #define COL_DISABLED RGB(0x3A,0x40,0x4A)
 
@@ -56,12 +56,13 @@ static NOTIFYICONDATAW g_nid;
 static volatile BOOL g_gameRunning = FALSE;
 static volatile int g_lastValue = 11;
 static COLORREF g_hintColor = COL_ORANGE;
-static wchar_t g_logPath[1100] = L"CNWoW_Patcher.log";
 static volatile int g_jackpot = 0;   
 static volatile BOOL g_logOpen = FALSE;
 static CRITICAL_SECTION g_logCS;
 static wchar_t g_logBuf[64][160];
 static int g_logCount = 0;
+static int g_logHead = 0;
+static int g_logStart = 0;
 static BOOL g_thrRunning = TRUE;
 
 static const unsigned char PREFIX[3] = { 0x64, 0x62, 0x96 };
@@ -72,7 +73,6 @@ static int g_targetCount = 0;
 static DWORD g_done[MAX_PROC];
 static int g_doneN = 0;
 
-static const char *g_seq[] = { "up","up","down","down","left","right","left","right","b","a" };
 static wchar_t g_keyBuf[16];
 static int g_keyBufLen = 0;
 static wchar_t g_wordBuf[32];
@@ -88,18 +88,16 @@ static void LogMsg(const wchar_t *fmt, ...) {
     wchar_t ts[16];
     SYSTEMTIME st; GetLocalTime(&st);
     swprintf(ts, 16, L"[%02d:%02d:%02d] ", st.wHour, st.wMinute, st.wSecond);
-    if (g_logCount < 64) {
-        swprintf(g_logBuf[g_logCount++], 160, L"%ls%ls", ts, line);
-    } else {
-        for (int i = 1; i < 64; i++) wcscpy(g_logBuf[i-1], g_logBuf[i]);
-        swprintf(g_logBuf[63], 160, L"%ls%ls", ts, line);
-    }
+    swprintf(g_logBuf[g_logHead], 160, L"%ls%ls", ts, line);
+    g_logHead = (g_logHead + 1) % 64;
+    if (g_logCount < 64) g_logCount++;
+    else g_logStart = (g_logStart + 1) % 64;
     LeaveCriticalSection(&g_logCS);
     if (g_logOpen && g_hwndLog) PostMessageW(g_hwndLog, WM_APP_LOG, 0, 0);
 }
 
 static BOOL IsWowName(const wchar_t *n) {
-    return _wcsicmp(n, L"wow.exe") == 0 || _wcsicmp(n, L"wow") == 0 || _wcsicmp(n, L"wowclassic.exe") == 0;
+    return _wcsicmp(n, L"wow.exe") == 0 || _wcsicmp(n, L"wow") == 0;
 }
 static BOOL IsBnetName(const wchar_t *n) {
     return _wcsicmp(n, L"battle.net.exe") == 0 || _wcsicmp(n, L"battle.net") == 0;
@@ -126,7 +124,7 @@ static BOOL BattleNetRunning(void) {
 }
 
 static int GetProcessPath(DWORD pid, wchar_t *buf, int cap) {
-    HANDLE h = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
     if (!h) return 0;
     DWORD sz = cap;
     BOOL ok = QueryFullProcessImageNameW(h, 0, buf, &sz);
@@ -175,11 +173,11 @@ static void DetectWowPath(void) {
     g_wowPath[0] = 0;
 }
 
-static int ScanRegion(HANDLE h, unsigned char *buf, SIZE_T size, SIZE_T baseAddr, int target) {
+static int ScanRegion(HANDLE h, unsigned char *buf, SIZE_T size, SIZE_T baseAddr, int target, SIZE_T limit) {
     int patched = 0;
     for (SIZE_T i = 0; i + 5 <= size; i++) {
+        if (i >= limit) break;
         if (buf[i] == PREFIX[0] && buf[i+1] == PREFIX[1] && buf[i+2] == PREFIX[2] && buf[i+4] == 0x01) {
-            
             unsigned char want = (unsigned char)(0x40 + target * 2);
             if (buf[i+3] != want) {
                 SIZE_T written = 0;
@@ -195,30 +193,40 @@ typedef struct { HANDLE h; unsigned char *base; SIZE_T size; int target; int res
 static DWORD WINAPI ScanWorker(LPVOID p) {
     ScanJob *job = (ScanJob*)p;
     job->result = 0;
+    SIZE_T maxChunk = min(4*1024*1024 + 8, job->size);
+    unsigned char *buf = malloc(maxChunk);
+    if (!buf) return 0;
     for (SIZE_T off = 0; off < job->size; off += 4*1024*1024) {
         SIZE_T chunk = min(4*1024*1024, job->size - off);
-        unsigned char *buf = malloc(chunk);
-        if (!buf) break;
+        SIZE_T want = min(chunk + 8, job->size - off);
         SIZE_T read = 0;
-        if (ReadProcessMemory(job->h, job->base + off, buf, chunk, &read) && read > 0)
-            job->result += ScanRegion(job->h, buf, read, (SIZE_T)(job->base + off), job->target);
-        free(buf);
+        if (ReadProcessMemory(job->h, job->base + off, buf, want, &read) && read > 0)
+            job->result += ScanRegion(job->h, buf, read, (SIZE_T)(job->base + off), job->target, chunk);
     }
+    free(buf);
     return 0;
 }
 static int PatchPid(DWORD pid, int target) {
     HANDLE h = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_WRITE, FALSE, pid);
     if (!h) return 0;
-    ScanJob jobs[512];
+    int cap = 256;
+    ScanJob *jobs = malloc(sizeof(ScanJob) * cap);
+    if (!jobs) { CloseHandle(h); return 0; }
     int nj = 0;
     unsigned char *addr = NULL;
     MEMORY_BASIC_INFORMATION mbi;
-    while (VirtualQueryEx(h, addr, &mbi, sizeof(mbi)) && nj < 512) {
+    while (VirtualQueryEx(h, addr, &mbi, sizeof(mbi))) {
         SIZE_T base = (SIZE_T)mbi.BaseAddress;
         SIZE_T size = mbi.RegionSize;
         addr = (unsigned char*)(base + size);
         if (mbi.State != MEM_COMMIT || mbi.Type != MEM_PRIVATE) continue;
         if (!(mbi.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY))) continue;
+        if (nj == cap) {
+            cap *= 2;
+            ScanJob *njobs = realloc(jobs, sizeof(ScanJob) * cap);
+            if (!njobs) break;
+            jobs = njobs;
+        }
         jobs[nj].h = h;
         jobs[nj].base = (unsigned char*)base;
         jobs[nj].size = size;
@@ -236,19 +244,16 @@ static int PatchPid(DWORD pid, int target) {
         WaitForMultipleObjects(nt, th, TRUE, INFINITE);
         for (int t = 0; t < nt; t++) { CloseHandle(th[t]); total += jobs[i + t].result; }
     }
+    free(jobs);
     CloseHandle(h);
     return total;
 }
-static DWORD g_lastVerify = 0;
 static void PatchAll(void) {
     DWORD pids[8];
     int n = FindProcesses(IsWowName, pids, 8);
     if (n == 0) { g_gameRunning = FALSE; g_targetCount = 0; g_doneN = 0; return; }
     g_gameRunning = TRUE;
     BOOL chaos = (SendMessageW(g_chkChaos, BM_GETCHECK, 0, 0) == BST_CHECKED);
-    DWORD now = GetTickCount();
-    BOOL verify = (now - g_lastVerify > 3000);
-    if (verify) g_lastVerify = now;
     int w = 0;
     for (int i = 0; i < g_targetCount; i++) {
         BOOL alive = FALSE;
@@ -284,7 +289,7 @@ static void PatchAll(void) {
         BOOL done = FALSE;
         for (int d = 0; d < g_doneN; d++) if (g_done[d] == g_targets[i].pid) { done = TRUE; break; }
         if (!done) need = TRUE;
-        if (need || (verify && done)) {
+        if (need) {
             int c = PatchPid(g_targets[i].pid, g_targets[i].target);
             if (c > 0) {
                 total += c;
@@ -338,7 +343,7 @@ static DWORD WINAPI WmiThread(LPVOID p) {
     IWbemServices *svc = NULL;
     IEnumWbemClassObject *en = NULL;
     BSTR ns = SysAllocString(L"ROOT\\CIMV2");
-    BSTR q = SysAllocString(L"SELECT * FROM Win32_ProcessStartTrace WHERE ProcessName='Wow.exe' OR ProcessName='wow.exe' OR ProcessName='wowclassic.exe'");
+    BSTR q = SysAllocString(L"SELECT * FROM Win32_ProcessStartTrace WHERE ProcessName='Wow.exe' OR ProcessName='wow.exe'");
     BSTR wql = SysAllocString(L"WQL");
     BOOL wmiOK = FALSE;
     if (SUCCEEDED(CoCreateInstance(&CLSID_WbemLocator, 0, CLSCTX_INPROC_SERVER, &IID_IWbemLocator, (LPVOID*)&loc)) &&
@@ -465,35 +470,43 @@ static void HandleKey(const wchar_t *k) {
 }
 
 static HWND g_logEdit;
+static wchar_t *BuildLogText(void) {
+    EnterCriticalSection(&g_logCS);
+    wchar_t *all = malloc(((size_t)g_logCount * 170 + 8) * sizeof(wchar_t));
+    if (all) {
+        all[0] = 0;
+        for (int i = 0; i < g_logCount; i++) {
+            wcscat(all, g_logBuf[(g_logStart + i) % 64]);
+            wcscat(all, L"\r\n");
+        }
+    }
+    LeaveCriticalSection(&g_logCS);
+    return all;
+}
 static void OpenLogWindow(void) {
     if (g_logOpen) return;
     g_logOpen = TRUE;
     g_hwndLog = CreateWindowExW(0, L"CNWoWPatcherLog", L"CN-WoW Patcher · Log",
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MAXIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT, 675, 525, NULL, NULL, GetModuleHandleW(NULL), NULL);
+    RECT cr; GetClientRect(g_hwndLog, &cr);
     g_logEdit = CreateWindowExW(0, L"EDIT", L"",
         WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_READONLY | WS_VSCROLL,
-        8, 8, 664, 484, g_hwndLog, NULL, GetModuleHandleW(NULL), NULL);
+        0, 0, cr.right, cr.bottom, g_hwndLog, NULL, GetModuleHandleW(NULL), NULL);
     SendMessageW(g_logEdit, WM_SETFONT, (WPARAM)g_fontMono, TRUE);
     
     RECT r; GetWindowRect(g_hwnd, &r);
     SetWindowPos(g_hwndLog, NULL, r.right + 8, r.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
     ShowWindow(g_hwndLog, SW_SHOW);
     
-    EnterCriticalSection(&g_logCS);
-    wchar_t all[8192] = L"";
-    for (int i = 0; i < g_logCount; i++) { wcscat(all, g_logBuf[i]); wcscat(all, L"\r\n"); }
-    LeaveCriticalSection(&g_logCS);
-    SetWindowTextW(g_logEdit, all);
+    wchar_t *all = BuildLogText();
+    if (all) { SetWindowTextW(g_logEdit, all); free(all); }
     LogMsg(L"秘籍生效！Log 模式开启");
 }
 
 static void RefreshLog(void) {
-    EnterCriticalSection(&g_logCS);
-    wchar_t all[8192] = L"";
-    for (int i = 0; i < g_logCount; i++) { wcscat(all, g_logBuf[i]); wcscat(all, L"\r\n"); }
-    LeaveCriticalSection(&g_logCS);
-    SetWindowTextW(g_logEdit, all);
+    wchar_t *all = BuildLogText();
+    if (all) { SetWindowTextW(g_logEdit, all); free(all); }
     SendMessageW(g_logEdit, EM_SETSEL, -1, -1);
 }
 
@@ -740,6 +753,12 @@ static LRESULT CALLBACK LogWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP_LOG:
         RefreshLog();
         return 0;
+    case WM_SIZE:
+        if (g_logEdit) {
+            RECT cr; GetClientRect(hwnd, &cr);
+            MoveWindow(g_logEdit, 0, 0, cr.right, cr.bottom, TRUE);
+        }
+        return 0;
     case WM_CLOSE:
         g_logOpen = FALSE;
         DestroyWindow(hwnd);
@@ -758,6 +777,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrev, LPWSTR lpCmd, int nShow) {
         BOOL (WINAPI *sda)(void*) = (BOOL(WINAPI*)(void*))GetProcAddress(u32, "SetProcessDpiAwarenessContext");
         if (sda) sda((void*)-4);
     }
+    srand((unsigned)time(NULL) ^ GetCurrentProcessId());
 
     WNDCLASSW wc = {0};
     wc.lpfnWndProc = MainWndProc;

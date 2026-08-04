@@ -23,8 +23,9 @@
 需要 [w64devkit](https://github.com/skeeto/w64devkit)（免安装 MinGW）：
 
 ```sh
-gcc -O2 -municode -finput-charset=UTF-8 -o "CN-WoW Patcher.exe" src/patcher.c \
-    -luser32 -lkernel32 -ladvapi32 -lshell32 -lcomctl32 -mwindows
+windres -c 65001 src/resource.rc -O coff -o resource.o
+gcc -O2 -s -municode -finput-charset=UTF-8 -o "CN-WoW Patcher.exe" src/patcher.c \
+    resource.o -luser32 -lkernel32 -ladvapi32 -lshell32 -lcomctl32 -lole32 -loleaut32 -lwbemuuid -mwindows
 ```
 
 ## 文件

@@ -2,6 +2,7 @@
 
 import ctypes
 import ctypes.wintypes as wt
+import concurrent.futures
 import threading
 import time
 import subprocess
@@ -15,13 +16,22 @@ from PIL import Image, ImageDraw, ImageFont
 
 k32 = ctypes.windll.kernel32
 k32.OpenProcess.argtypes = [wt.DWORD, wt.BOOL, wt.DWORD]
+k32.OpenProcess.restype = wt.HANDLE
 k32.CloseHandle.argtypes = [wt.HANDLE]
+k32.CloseHandle.restype = wt.BOOL
+k32.CreateToolhelp32Snapshot.restype = wt.HANDLE
 k32.VirtualQueryEx.argtypes = [wt.HANDLE, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t]
+k32.VirtualQueryEx.restype = ctypes.c_size_t
 k32.ReadProcessMemory.argtypes = [wt.HANDLE, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
+k32.ReadProcessMemory.restype = wt.BOOL
 k32.WriteProcessMemory.argtypes = [wt.HANDLE, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
+k32.WriteProcessMemory.restype = wt.BOOL
 k32.Process32FirstW.argtypes = [wt.HANDLE, ctypes.c_void_p]
 k32.Process32NextW.argtypes = [wt.HANDLE, ctypes.c_void_p]
 k32.QueryFullProcessImageNameW.argtypes = [wt.HANDLE, wt.DWORD, ctypes.c_wchar_p, ctypes.POINTER(wt.DWORD)]
+k32.QueryFullProcessImageNameW.restype = wt.BOOL
+
+_SCAN_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
 PROCESS_QUERY_INFORMATION = 0x0400
 PROCESS_VM_READ = 0x0010
@@ -41,7 +51,7 @@ ORANGE = "#e8943a"
 GRAY = "#5c6470"
 GOLD = "#ffd700"
 FONT = ("Segoe UI", "Microsoft YaHei UI")
-APP_VER = "v1.3"
+APP_VER = "v1.4"
 APP_AUTHOR = "Adavak"
 PREFIX = b"\x64\x62\x96"
 KEY_SEQ = ("up", "up", "down", "down", "left", "right", "left", "right", "b", "a")
@@ -82,7 +92,7 @@ def battle_net_running():
     return bool(find_processes(BATTLE_NET_NAMES))
 
 def detect_wow_path():
-    for pid in find_processes(("wow.exe", "wow", "wowclassic.exe")):
+    for pid in find_processes(("wow.exe", "wow")):
         h = k32.OpenProcess(PROCESS_QUERY_INFORMATION, False, pid)
         if not h:
             continue
@@ -131,7 +141,7 @@ def get_private_regions(h):
             continue
         if mbi.Type != MEM_PRIVATE:
             continue
-        if not (mbi.Protect & (0x04 | 0x40)):
+        if not (mbi.Protect & (0x04 | 0x40 | 0x08)):
             continue
         regions.append((base, size))
     return regions
@@ -142,15 +152,16 @@ def scan_region(h, base, size, target):
     off = 0
     while off < size:
         chunk = min(4 * 1024 * 1024, size - off)
-        buf = ctypes.create_string_buffer(chunk)
+        read_len = min(chunk + 8, size - off)
+        buf = ctypes.create_string_buffer(read_len)
         br = ctypes.c_size_t(0)
-        ok = k32.ReadProcessMemory(h, ctypes.c_void_p(base + off), buf, chunk, ctypes.byref(br))
+        ok = k32.ReadProcessMemory(h, ctypes.c_void_p(base + off), buf, read_len, ctypes.byref(br))
         if ok and br.value:
             data = bytes(buf.raw[:br.value])
             idx = 0
             while True:
                 i = data.find(PREFIX, idx)
-                if i < 0:
+                if i < 0 or i >= chunk:
                     break
                 if i + 4 < len(data) and data[i + 4] == 0x01:
                     tgt = base + off + i + 3
@@ -165,7 +176,7 @@ def scan_region(h, base, size, target):
 
 def patch_all(targets):
     results = []
-    for pid in find_processes(("wow.exe", "wow", "wowclassic.exe")):
+    for pid in find_processes(("wow.exe", "wow")):
         if pid not in targets:
             continue
         h = k32.OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_WRITE, False, pid)
@@ -173,10 +184,8 @@ def patch_all(targets):
             continue
         try:
             regions = get_private_regions(h)
-            import concurrent.futures
             target = targets[pid]
-            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
-                results_scans = list(ex.map(lambda r: scan_region(h, r[0], r[1], target), regions))
+            results_scans = list(_SCAN_EXECUTOR.map(lambda r: scan_region(h, r[0], r[1], target), regions))
             s = sum(results_scans)
             results.append((pid, s, target))
         finally:
@@ -201,6 +210,8 @@ class App:
         self.log_data = []
         self.key_buf = []
         self.word_buf = []
+        self.last_chaos = False
+        self.patched_pids = set()
 
         root.geometry("464x228")
 
@@ -341,7 +352,7 @@ class App:
         self.log_win.protocol("WM_DELETE_WINDOW", self.close_log_win)
         self.log_text = tk.Text(self.log_win, width=60, height=20, bg=PANEL, fg=TEXT,
                                 font=(FONT, -14), state="disabled", relief="flat", bd=0)
-        self.log_text.pack(padx=8, pady=8)
+        self.log_text.pack(fill="both", expand=True)
         self.append_log("秘籍生效！Log 模式开启")
 
     def close_log_win(self):
@@ -390,41 +401,49 @@ class App:
         self.root.after(200, self.refresh_ui)
 
     def tick(self):
-        pids = set(find_processes(("wow.exe", "wow", "wowclassic.exe")))
+        pids = set(find_processes(("wow.exe", "wow")))
         self.game_running = bool(pids)
         new_pids = pids - self.last_pids
         for pid in new_pids:
             self.append_log("检测到游戏进程 (pid %d)" % pid)
         if pids:
-            if self.chaos_var.get():
+            chaos = self.chaos_var.get()
+            if chaos != self.last_chaos:
+                self.last_chaos = chaos
+                self.targets = {}
+                self.patched_pids = set()
+            if chaos:
                 for pid in pids:
                     if pid not in self.targets:
                         self.targets[pid] = random.randint(0, 11)
                 self.targets = {p: t for p, t in self.targets.items() if p in pids}
             else:
                 self.targets = {p: 11 for p in pids}
-            res = patch_all(self.targets)
-            if res:
-                for pid, cnt, val in res:
-                    if cnt:
-                        self.append_log("pid %d: 已修改 %d 处 → 值 %d" % (pid, cnt, val))
-                self.patched = sum(r[1] for r in res)
-                self.last_value = res[-1][2]
-                jp = 0
-                for pid, cnt, val in res:
-                    if val == 6:
-                        jp = 1
-                    elif val == 2:
-                        jp = 2
-                    elif val == 1:
-                        jp = 3
-                self.jackpot = jp
-                if jp == 1:
-                    self.append_log("你中奖了！扎昆守护着你！")
-                elif jp == 2:
-                    self.append_log("龙飞走了，堡垒化了…")
-                elif jp == 3:
-                    self.append_log("光源远征了…")
+            need = bool(new_pids - self.patched_pids)
+            if need:
+                res = patch_all(self.targets)
+                if res:
+                    for pid, cnt, val in res:
+                        if cnt:
+                            self.append_log("pid %d: 已修改 %d 处 → 值 %d" % (pid, cnt, val))
+                            self.patched_pids.add(pid)
+                    self.patched = sum(r[1] for r in res)
+                    self.last_value = res[-1][2]
+                    jp = 0
+                    for pid, cnt, val in res:
+                        if val == 6:
+                            jp = 1
+                        elif val == 2:
+                            jp = 2
+                        elif val == 1:
+                            jp = 3
+                    self.jackpot = jp
+                    if jp == 1:
+                        self.append_log("你中奖了！扎昆守护着你！")
+                    elif jp == 2:
+                        self.append_log("龙飞走了，堡垒化了…")
+                    elif jp == 3:
+                        self.append_log("光源远征了…")
             self.last_pids = pids
         else:
             if self.last_pids:
@@ -432,6 +451,7 @@ class App:
             self.last_pids = set()
             self.patched = 0
             self.targets = {}
+            self.patched_pids = set()
             self.jackpot = 0
 
     def _wmi_watcher(self):
@@ -441,7 +461,7 @@ class App:
             pythoncom.CoInitialize()
             wmi = win32com.client.GetObject("winmgmts:\\\\.\\root\\cimv2")
             q = ("SELECT * FROM Win32_ProcessStartTrace WHERE "
-                 "ProcessName='Wow.exe' OR ProcessName='wow.exe' OR ProcessName='wowclassic.exe'")
+                 "ProcessName='Wow.exe' OR ProcessName='wow.exe'")
             return wmi.ExecNotificationQuery(q)
         except Exception as e:
             self.append_log("WMI 不可用，回退轮询模式 (%s)" % e)
