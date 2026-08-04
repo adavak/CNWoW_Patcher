@@ -31,9 +31,16 @@ k32.Process32NextW.argtypes = [wt.HANDLE, ctypes.c_void_p]
 k32.QueryFullProcessImageNameW.argtypes = [wt.HANDLE, wt.DWORD, ctypes.c_wchar_p, ctypes.POINTER(wt.DWORD)]
 k32.QueryFullProcessImageNameW.restype = wt.BOOL
 
+class FILETIME(ctypes.Structure):
+    _fields_ = [("dwLowDateTime", wt.DWORD), ("dwHighDateTime", wt.DWORD)]
+
+k32.GetProcessTimes.argtypes = [wt.HANDLE, ctypes.POINTER(FILETIME), ctypes.POINTER(FILETIME), ctypes.POINTER(FILETIME), ctypes.POINTER(FILETIME)]
+k32.GetProcessTimes.restype = wt.BOOL
+
 _SCAN_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
 PROCESS_QUERY_INFORMATION = 0x0400
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 PROCESS_VM_READ = 0x0010
 PROCESS_VM_WRITE = 0x0020
 MEM_COMMIT = 0x1000
@@ -51,7 +58,7 @@ ORANGE = "#e8943a"
 GRAY = "#5c6470"
 GOLD = "#ffd700"
 FONT = ("Segoe UI", "Microsoft YaHei UI")
-APP_VER = "v1.4"
+APP_VER = "v1.4.1"
 APP_AUTHOR = "Adavak"
 PREFIX = b"\x64\x62\x96"
 KEY_SEQ = ("up", "up", "down", "down", "left", "right", "left", "right", "b", "a")
@@ -125,6 +132,18 @@ def detect_wow_path():
     except Exception:
         pass
     return None
+
+def get_proc_start_time(pid):
+    h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not h:
+        return 0
+    try:
+        ct, et, kt, ut = FILETIME(), FILETIME(), FILETIME(), FILETIME()
+        if k32.GetProcessTimes(h, ctypes.byref(ct), ctypes.byref(et), ctypes.byref(kt), ctypes.byref(ut)):
+            return (ct.dwHighDateTime << 32) | ct.dwLowDateTime
+        return 0
+    finally:
+        k32.CloseHandle(h)
 
 def get_private_regions(h):
     regions = []
@@ -212,6 +231,7 @@ class App:
         self.word_buf = []
         self.last_chaos = False
         self.patched_pids = set()
+        self.proc_start = {}
 
         root.geometry("464x228")
 
@@ -376,7 +396,7 @@ class App:
         if battle_net_running():
             self.bnet_var.set("战网：运行中")
             self.bnet_dot.itemconfig(self.bnet_dot_id, fill=GREEN)
-            self.hint_lbl.config(text="暂仅支持单进程，等待游戏完全退出后再启动", fg=GOLD)
+            self.hint_lbl.config(text="多开/重开后若未生效，请反馈", fg=GOLD)
         else:
             self.bnet_var.set("战网：未运行")
             self.bnet_dot.itemconfig(self.bnet_dot_id, fill=GRAY)
@@ -407,6 +427,12 @@ class App:
         for pid in new_pids:
             self.append_log("检测到游戏进程 (pid %d)" % pid)
         if pids:
+            for pid in pids:
+                st = get_proc_start_time(pid)
+                if pid in self.proc_start and self.proc_start[pid] != st:
+                    self.patched_pids.discard(pid)
+                    self.targets.pop(pid, None)
+                self.proc_start[pid] = st
             chaos = self.chaos_var.get()
             if chaos != self.last_chaos:
                 self.last_chaos = chaos
@@ -452,6 +478,7 @@ class App:
             self.patched = 0
             self.targets = {}
             self.patched_pids = set()
+            self.proc_start = {}
             self.jackpot = 0
 
     def _wmi_watcher(self):
@@ -473,7 +500,7 @@ class App:
             while True:
                 try:
                     try:
-                        evt = watcher.NextEvent(3000)
+                        evt = watcher.NextEvent(500)
                     except Exception:
                         evt = None
                         time.sleep(1)

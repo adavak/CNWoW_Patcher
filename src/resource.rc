@@ -1,8 +1,8 @@
 1 ICON "CNWoW.ico"
 
 1 VERSIONINFO
-FILEVERSION     1,4,0,0
-PRODUCTVERSION  1,4,0,0
+FILEVERSION     1,4,1,0
+PRODUCTVERSION  1,4,1,0
 FILEOS          0x40004L
 FILETYPE        0x1L
 {
@@ -12,12 +12,12 @@ FILETYPE        0x1L
         {
             VALUE "CompanyName", "Adavak\0"
             VALUE "FileDescription", "CN-WoW Patcher\0"
-            VALUE "FileVersion", "1.4.0.0\0"
+            VALUE "FileVersion", "1.4.1.0\0"
             VALUE "InternalName", "CN-WoW Patcher\0"
             VALUE "LegalCopyright", "Copyright (C) Adavak\0"
             VALUE "OriginalFilename", "CN-WoW Patcher.exe\0"
             VALUE "ProductName", "CN-WoW Patcher\0"
-            VALUE "ProductVersion", "1.4.0.0\0"
+            VALUE "ProductVersion", "1.4.1.0\0"
         }
     }
     BLOCK "VarFileInfo"

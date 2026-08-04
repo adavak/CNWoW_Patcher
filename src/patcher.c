@@ -29,7 +29,7 @@
 #define COL_ORANGE   RGB(0xE8,0x94,0x3A)
 #define COL_GRAY     RGB(0x5C,0x64,0x70)
 #define COL_GOLD     RGB(0xFF,0xD7,0x00)
-#define APP_VER  L"v1.4"
+#define APP_VER  L"v1.4.1"
 #define APP_AUTH L"Adavak"
 #define COL_DISABLED RGB(0x3A,0x40,0x4A)
 
@@ -67,8 +67,8 @@ static BOOL g_thrRunning = TRUE;
 
 static const unsigned char PREFIX[3] = { 0x64, 0x62, 0x96 };
 
-#define MAX_PROC 8
-static struct { DWORD pid; int target; int wasChaos; } g_targets[MAX_PROC];
+#define MAX_PROC 16
+static struct { DWORD pid; ULONGLONG startTime; int target; int wasChaos; } g_targets[MAX_PROC];
 static int g_targetCount = 0;
 static DWORD g_done[MAX_PROC];
 static int g_doneN = 0;
@@ -118,9 +118,25 @@ static int FindProcesses(BOOL (*match)(const wchar_t*), DWORD *pids, int max) {
     return n;
 }
 
+static ULONGLONG GetProcStartTime(DWORD pid) {
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!h) return 0;
+    FILETIME ct, et, kt, ut;
+    ULONGLONG t = 0;
+    if (GetProcessTimes(h, &ct, &et, &kt, &ut))
+        t = ((ULONGLONG)ct.dwHighDateTime << 32) | ct.dwLowDateTime;
+    CloseHandle(h);
+    return t;
+}
+
+static BOOL IsPidDone(DWORD pid) {
+    for (int d = 0; d < g_doneN; d++) if (g_done[d] == pid) return TRUE;
+    return FALSE;
+}
+
 static BOOL BattleNetRunning(void) {
-    DWORD pids[8];
-    return FindProcesses(IsBnetName, pids, 8) > 0;
+    DWORD pids[16];
+    return FindProcesses(IsBnetName, pids, 16) > 0;
 }
 
 static int GetProcessPath(DWORD pid, wchar_t *buf, int cap) {
@@ -135,8 +151,8 @@ static int GetProcessPath(DWORD pid, wchar_t *buf, int cap) {
 static wchar_t g_wowPath[1024] = L"";
 
 static void DetectWowPath(void) {
-    DWORD pids[8];
-    int n = FindProcesses(IsWowName, pids, 8);
+    DWORD pids[16];
+    int n = FindProcesses(IsWowName, pids, 16);
     for (int i = 0; i < n; i++) {
         wchar_t buf[1024];
         if (GetProcessPath(pids[i], buf, 1024) && GetFileAttributesW(buf) != INVALID_FILE_ATTRIBUTES) {
@@ -249,8 +265,8 @@ static int PatchPid(DWORD pid, int target) {
     return total;
 }
 static void PatchAll(void) {
-    DWORD pids[8];
-    int n = FindProcesses(IsWowName, pids, 8);
+    DWORD pids[16];
+    int n = FindProcesses(IsWowName, pids, 16);
     if (n == 0) { g_gameRunning = FALSE; g_targetCount = 0; g_doneN = 0; return; }
     g_gameRunning = TRUE;
     BOOL chaos = (SendMessageW(g_chkChaos, BM_GETCHECK, 0, 0) == BST_CHECKED);
@@ -269,13 +285,22 @@ static void PatchAll(void) {
     }
     g_doneN = w;
     for (int i = 0; i < n; i++) {
+        ULONGLONG st = GetProcStartTime(pids[i]);
         int j;
         for (j = 0; j < g_targetCount; j++) if (g_targets[j].pid == pids[i]) break;
-        if (j == g_targetCount && g_targetCount < MAX_PROC) {
-            g_targets[g_targetCount].pid = pids[i];
-            g_targets[g_targetCount].target = chaos ? (rand() % 12) : 11;
-            g_targets[g_targetCount].wasChaos = chaos;
-            g_targetCount++;
+        if (j == g_targetCount) {
+            if (g_targetCount < MAX_PROC) {
+                g_targets[g_targetCount].pid = pids[i];
+                g_targets[g_targetCount].startTime = st;
+                g_targets[g_targetCount].target = chaos ? (rand() % 12) : 11;
+                g_targets[g_targetCount].wasChaos = chaos;
+                g_targetCount++;
+            }
+        } else if (g_targets[j].startTime != st) {
+            g_targets[j].startTime = st;
+            g_targets[j].target = chaos ? (rand() % 12) : 11;
+            g_targets[j].wasChaos = chaos;
+            for (int d = 0; d < g_doneN; d++) if (g_done[d] == pids[i]) { g_done[d] = g_done[--g_doneN]; break; }
         }
     }
     int total = 0, lastVal = 11, jp = 0;
@@ -353,8 +378,8 @@ static DWORD WINAPI WmiThread(LPVOID p) {
     }
     if (!wmiOK) {
         while (g_thrRunning) {
-            DWORD pids[8];
-            int n = FindProcesses(IsWowName, pids, 8);
+            DWORD pids[16];
+            int n = FindProcesses(IsWowName, pids, 16);
             if (n > 0) {
                 PatchAll();
                 Sleep(100);
@@ -373,16 +398,22 @@ static DWORD WINAPI WmiThread(LPVOID p) {
     while (g_thrRunning) {
         IWbemClassObject *obj = NULL;
         ULONG got = 0;
-        HRESULT hr2 = en->lpVtbl->Next(en, 3000, 1, &obj, &got);
+        HRESULT hr2 = en->lpVtbl->Next(en, 500, 1, &obj, &got);
         if (hr2 == WBEM_S_NO_ERROR && got) {
             VARIANT v;
             VariantInit(&v);
+            DWORD started = 0;
             if (SUCCEEDED(obj->lpVtbl->Get(obj, L"ProcessID", 0, &v, 0, 0)) && v.vt == VT_I4) {
-                LogMsg(L"检测到游戏进程 (pid %lu)", (unsigned long)v.lVal);
+                started = (DWORD)v.lVal;
+                LogMsg(L"检测到游戏进程 (pid %lu)", (unsigned long)started);
             }
             VariantClear(&v);
             obj->lpVtbl->Release(obj);
-            PatchAll();
+            for (int a = 0; a < 8 && g_thrRunning; a++) {
+                PatchAll();
+                if (started == 0 || IsPidDone(started)) break;
+                Sleep(250);
+            }
         } else if (hr2 == WBEM_S_TIMEDOUT) {
             PatchAll();
         }
@@ -400,7 +431,7 @@ static void UpdateUI(void) {
     SetWindowTextW(g_lblBnet, bnet ? L"战网：运行中" : L"战网：未运行");
     SetDot(g_dotBnet, &g_bnetColor, bnet ? COL_GREEN : COL_GRAY);
     if (bnet) {
-        SetWindowTextW(g_lblHint, L"暂仅支持单进程，等待游戏完全退出后再启动");
+        SetWindowTextW(g_lblHint, L"多开/重开后若未生效，请反馈");
         g_hintColor = COL_GOLD;
     } else {
         SetWindowTextW(g_lblHint, L"⚠ 战网未运行，仅可查看登录界面");
