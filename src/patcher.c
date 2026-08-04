@@ -1,6 +1,10 @@
 
+#ifndef UNICODE
 #define UNICODE
+#endif
+#ifndef _UNICODE
 #define _UNICODE
+#endif
 #include <windows.h>
 #include <tlhelp32.h>
 #include <winreg.h>
@@ -10,28 +14,29 @@
 #include <string.h>
 #include <time.h>
 
+#ifdef _MSC_VER
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "kernel32.lib")
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "wbemuuid.lib")
+#endif
 #include <wbemidl.h>
 
 #define COL_BG       RGB(0x16,0x17,0x1D)
 #define COL_PANEL    RGB(0x1E,0x20,0x26)
-#define COL_PANEL_LN RGB(0x2A,0x2D,0x35)
 #define COL_TEXT     RGB(0xF8,0xF8,0xF8)
 #define COL_MUTED    RGB(0x8F,0x96,0xA3)
 #define COL_ACCENT   RGB(0x00,0x74,0xE0)
 #define COL_ACCENT_H RGB(0x44,0xA4,0xFC)
+#define COL_ACCENT_HV RGB(0x1F,0x8A,0xF0)
 #define COL_GREEN    RGB(0x35,0xC4,0x7A)
 #define COL_ORANGE   RGB(0xE8,0x94,0x3A)
 #define COL_GRAY     RGB(0x5C,0x64,0x70)
 #define COL_GOLD     RGB(0xFF,0xD7,0x00)
-#define APP_VER  L"v1.4.1"
+#define APP_VER  L"v1.5"
 #define APP_AUTH L"Adavak"
-#define COL_DISABLED RGB(0x3A,0x40,0x4A)
 
 #define IDC_BNET_DOT   1001
 #define IDC_BNET_LBL   1002
@@ -41,8 +46,6 @@
 #define IDC_CHAOS      1006
 #define IDC_HINT_LBL   1007
 #define IDC_TOP_LBL    1008
-#define IDC_CHAOS_HINT 1009
-#define IDC_TRAY_MSG   40001
 
 #define WM_TRAYICON  (WM_APP + 1)
 #define WM_PATCH_DONE (WM_APP + 2)
@@ -56,7 +59,7 @@ static NOTIFYICONDATAW g_nid;
 static volatile BOOL g_gameRunning = FALSE;
 static volatile int g_lastValue = 11;
 static COLORREF g_hintColor = COL_ORANGE;
-static volatile int g_jackpot = 0;   
+static volatile int g_jackpot = 0;
 static volatile BOOL g_logOpen = FALSE;
 static CRITICAL_SECTION g_logCS;
 static wchar_t g_logBuf[64][160];
@@ -303,7 +306,7 @@ static void PatchAll(void) {
             for (int d = 0; d < g_doneN; d++) if (g_done[d] == pids[i]) { g_done[d] = g_done[--g_doneN]; break; }
         }
     }
-    int total = 0, lastVal = 11, jp = 0;
+    int lastVal = 11, jp = 0;
     for (int i = 0; i < g_targetCount; i++) {
         BOOL need = FALSE;
         if (g_targets[i].wasChaos != chaos) {
@@ -317,7 +320,6 @@ static void PatchAll(void) {
         if (need) {
             int c = PatchPid(g_targets[i].pid, g_targets[i].target);
             if (c > 0) {
-                total += c;
                 LogMsg(L"pid %lu: 已修改 %d 处 → 值 %d", g_targets[i].pid, c, g_targets[i].target);
                 if (g_doneN < MAX_PROC) g_done[g_doneN++] = g_targets[i].pid;
             }
@@ -337,12 +339,11 @@ static void PatchAll(void) {
 static void TrayShow(void) { Shell_NotifyIconW(NIM_ADD, &g_nid); }
 static void TrayHide(void) { Shell_NotifyIconW(NIM_DELETE, &g_nid); }
 
-static LRESULT WINAPI OnCtlColor(HWND hwnd, HDC hdc, HWND child, int type) {
+static LRESULT WINAPI OnCtlColor(HWND hwnd, HDC hdc, HWND child, int) {
     int id = GetDlgCtrlID(child);
     SetBkMode(hdc, TRANSPARENT);
-    if (id == IDC_STATUS_LBL || id == IDC_BNET_LBL || id == IDC_HINT_LBL || id == IDC_TOP_LBL || id == IDC_CHAOS_HINT) {
+    if (id == IDC_STATUS_LBL || id == IDC_BNET_LBL || id == IDC_HINT_LBL || id == IDC_TOP_LBL) {
         if (id == IDC_HINT_LBL) SetTextColor(hdc, g_hintColor);
-        else if (id == IDC_CHAOS_HINT) SetTextColor(hdc, COL_GOLD);
         else if (id == IDC_TOP_LBL) SetTextColor(hdc, COL_MUTED);
         else SetTextColor(hdc, COL_TEXT);
         return (LRESULT)g_brBG;
@@ -354,11 +355,18 @@ static LRESULT WINAPI OnCtlColor(HWND hwnd, HDC hdc, HWND child, int type) {
     return DefWindowProcW(hwnd, WM_CTLCOLORBTN, (WPARAM)hdc, (LPARAM)child);
 }
 static COLORREF g_bnetColor = COL_GRAY, g_statusColor = COL_GRAY;
+static BOOL g_btnHover = FALSE;
 static void SetDot(HWND dot, COLORREF *store, COLORREF c) {
+    if (*store == c) return;
     *store = c;
     InvalidateRect(dot, NULL, TRUE);
 }
-static DWORD WINAPI WmiThread(LPVOID p) {
+static void SetTextIfChanged(HWND h, const wchar_t *s) {
+    wchar_t cur[256];
+    GetWindowTextW(h, cur, 256);
+    if (wcscmp(cur, s) != 0) SetWindowTextW(h, s);
+}
+static DWORD WINAPI WmiThread(LPVOID) {
     HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
     if (SUCCEEDED(hr)) {
         hr = CoInitializeSecurity(NULL, -1, NULL, NULL, RPC_C_AUTHN_LEVEL_DEFAULT,
@@ -428,33 +436,33 @@ static DWORD WINAPI WmiThread(LPVOID p) {
 static void UpdateUI(void) {
     if (!g_hwnd) return;
     BOOL bnet = BattleNetRunning();
-    SetWindowTextW(g_lblBnet, bnet ? L"战网：运行中" : L"战网：未运行");
+    SetTextIfChanged(g_lblBnet, bnet ? L"战网：运行中" : L"战网：未运行");
     SetDot(g_dotBnet, &g_bnetColor, bnet ? COL_GREEN : COL_GRAY);
     if (bnet) {
-        SetWindowTextW(g_lblHint, L"多开/重开后若未生效，请反馈");
+        SetTextIfChanged(g_lblHint, L"多开/重开后若未生效，请反馈");
         g_hintColor = COL_GOLD;
     } else {
-        SetWindowTextW(g_lblHint, L"⚠ 战网未运行，仅可查看登录界面");
+        SetTextIfChanged(g_lblHint, L"⚠ 战网未运行，仅可查看登录界面");
         g_hintColor = COL_ORANGE;
     }
     if (g_gameRunning) {
         if (g_jackpot == 1) {
-            SetWindowTextW(g_lblStatus, L"你中奖了，扎昆守护着你！(版本 → 7.0)");
+            SetTextIfChanged(g_lblStatus, L"你中奖了，扎昆守护着你！(版本 → 7.0)");
             SetDot(g_dotStatus, &g_statusColor, COL_GOLD);
         } else if (g_jackpot == 2) {
-            SetWindowTextW(g_lblStatus, L"龙飞走了，堡垒化了…(版本 → 3.0)");
+            SetTextIfChanged(g_lblStatus, L"龙飞走了，堡垒化了…(版本 → 3.0)");
             SetDot(g_dotStatus, &g_statusColor, COL_GOLD);
         } else if (g_jackpot == 3) {
-            SetWindowTextW(g_lblStatus, L"光源远征了…(版本 → 2.0)");
+            SetTextIfChanged(g_lblStatus, L"光源远征了…(版本 → 2.0)");
             SetDot(g_dotStatus, &g_statusColor, COL_GOLD);
         } else {
             wchar_t buf[64];
             swprintf(buf, 64, L"已生效 · 载入界面版本 → %d.0", g_lastValue + 1);
-            SetWindowTextW(g_lblStatus, buf);
+            SetTextIfChanged(g_lblStatus, buf);
             SetDot(g_dotStatus, &g_statusColor, COL_GREEN);
         }
     } else {
-        SetWindowTextW(g_lblStatus, L"等待游戏启动…");
+        SetTextIfChanged(g_lblStatus, L"等待游戏启动…");
         SetDot(g_dotStatus, &g_statusColor, COL_GRAY);
     }
 }
@@ -462,14 +470,14 @@ static void UpdateUI(void) {
 static void OpenLogWindow(void);
 static void HandleKey(const wchar_t *k) {
     if (g_logOpen) return;
-    static const wchar_t *KEY_WANT = L"uuddlrlrba";   
+    static const wchar_t *KEY_WANT = L"uuddlrlrba";
     static const wchar_t *WORD_WANT = L"whosyourdaddy";
     BOOL isDir = (_wcsicmp(k, L"up") == 0 || _wcsicmp(k, L"down") == 0 ||
                   _wcsicmp(k, L"left") == 0 || _wcsicmp(k, L"right") == 0);
     if (isDir) {
         g_keyBuf[g_keyBufLen++] = k[0];
         if (g_keyBufLen > 10) { memmove(g_keyBuf, g_keyBuf + 1, 10 * sizeof(wchar_t)); g_keyBufLen = 10; }
-        
+
         if (wcsncmp(g_keyBuf, KEY_WANT, g_keyBufLen) != 0) g_keyBufLen = 0;
         if (g_keyBufLen == 10 && wcsncmp(g_keyBuf, KEY_WANT, 10) == 0) {
             g_keyBufLen = 0; g_wordBufLen = 0;
@@ -491,7 +499,7 @@ static void HandleKey(const wchar_t *k) {
         }
         g_wordBuf[g_wordBufLen++] = k[0];
         if (g_wordBufLen > 13) { memmove(g_wordBuf, g_wordBuf + 1, 13 * sizeof(wchar_t)); g_wordBufLen = 13; }
-        
+
         if (_wcsnicmp(g_wordBuf, WORD_WANT, g_wordBufLen) != 0) g_wordBufLen = 0;
         if (g_wordBufLen == 13 && _wcsicmp(g_wordBuf, WORD_WANT) == 0) {
             g_keyBufLen = 0; g_wordBufLen = 0;
@@ -518,18 +526,30 @@ static void OpenLogWindow(void) {
     if (g_logOpen) return;
     g_logOpen = TRUE;
     g_hwndLog = CreateWindowExW(0, L"CNWoWPatcherLog", L"CN-WoW Patcher · Log",
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MAXIMIZEBOX,
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MAXIMIZEBOX | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT, 675, 525, NULL, NULL, GetModuleHandleW(NULL), NULL);
+    {
+        HMODULE dwm = LoadLibraryW(L"dwmapi.dll");
+        if (dwm) {
+            HRESULT (WINAPI *dwa)(HWND, DWORD, const void*, DWORD) =
+                (HRESULT(WINAPI*)(HWND,DWORD,const void*,DWORD))(void*)GetProcAddress(dwm, "DwmSetWindowAttribute");
+            if (dwa) {
+                int pref = 2;
+                dwa(g_hwndLog, 33, &pref, sizeof(pref));
+            }
+            FreeLibrary(dwm);
+        }
+    }
     RECT cr; GetClientRect(g_hwndLog, &cr);
     g_logEdit = CreateWindowExW(0, L"EDIT", L"",
         WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_READONLY | WS_VSCROLL,
         0, 0, cr.right, cr.bottom, g_hwndLog, NULL, GetModuleHandleW(NULL), NULL);
     SendMessageW(g_logEdit, WM_SETFONT, (WPARAM)g_fontMono, TRUE);
-    
+
     RECT r; GetWindowRect(g_hwnd, &r);
     SetWindowPos(g_hwndLog, NULL, r.right + 8, r.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
     ShowWindow(g_hwndLog, SW_SHOW);
-    
+
     wchar_t *all = BuildLogText();
     if (all) { SetWindowTextW(g_logEdit, all); free(all); }
     LogMsg(L"秘籍生效！Log 模式开启");
@@ -543,6 +563,21 @@ static void RefreshLog(void) {
 
 static LRESULT CALLBACK FwdProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     WNDPROC old = (WNDPROC)GetPropW(h, L"OLDPROC");
+    if (h == g_btnStart) {
+        if (m == WM_MOUSEMOVE) {
+            if (!g_btnHover) {
+                g_btnHover = TRUE;
+                TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, h, 0 };
+                TrackMouseEvent(&tme);
+                InvalidateRect(h, NULL, TRUE);
+            }
+        } else if (m == WM_MOUSELEAVE) {
+            if (g_btnHover) {
+                g_btnHover = FALSE;
+                InvalidateRect(h, NULL, TRUE);
+            }
+        }
+    }
     if ((m == WM_CHAR || m == WM_KEYDOWN) && g_hwnd && !g_logOpen)
         SendMessageW(g_hwnd, m, w, l);
     return CallWindowProcW(old, h, m, w, l);
@@ -565,7 +600,9 @@ static void LaunchGame(void) {
         swprintf(cmd, 1100, L"\"%ls\"", g_wowPath);
     wchar_t dir[1024]; wcscpy(dir, g_wowPath);
     wchar_t *slash = wcsrchr(dir, L'\\'); if (slash) *slash = 0;
-    STARTUPINFOW si = { sizeof(si) };
+    STARTUPINFOW si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
     PROCESS_INFORMATION pi;
     if (CreateProcessW(NULL, cmd, NULL, NULL, FALSE, 0, NULL, dir, &si, &pi)) {
         CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
@@ -588,49 +625,60 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
         RECT cr;
         GetClientRect(hwnd, &cr);
-        int W = cr.right;   
+        int W = cr.right;
 
-        
+
         CreateWindowExW(0, L"STATIC", L"通过战网或点击下面按钮启动游戏",
             WS_CHILD | WS_VISIBLE | SS_CENTER, 0, 21, W, 30, hwnd, (HMENU)IDC_TOP_LBL, NULL, NULL);
         HWND topLbl = GetDlgItem(hwnd, IDC_TOP_LBL);
         SendMessageW(topLbl, WM_SETFONT, (WPARAM)g_fontSmall, TRUE);
 
-        
+
         g_dotBnet = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW,
             30, 75, 18, 18, hwnd, (HMENU)IDC_BNET_DOT, NULL, NULL);
         g_lblBnet = CreateWindowExW(0, L"STATIC", L"战网：检测中…", WS_CHILD | WS_VISIBLE,
             60, 69, 300, 30, hwnd, (HMENU)IDC_BNET_LBL, NULL, NULL);
         SendMessageW(g_lblBnet, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
 
-        
+
         int bx = (W - 600) / 2;
         if (bx < 10) bx = 10;
         g_btnStart = CreateWindowExW(0, L"BUTTON", L"▶  进入游戏",
             WS_CHILD | WS_VISIBLE | BS_OWNERDRAW, bx, 114, 600, 69, hwnd, (HMENU)IDC_START_BTN, NULL, NULL);
         SendMessageW(g_btnStart, WM_SETFONT, (WPARAM)g_fontTitle, TRUE);
+        SetClassLongPtrW(g_btnStart, GCLP_HCURSOR, (LONG_PTR)LoadCursorW(NULL, IDC_HAND));
 
-        
+
         g_dotStatus = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW,
             30, 207, 18, 18, hwnd, (HMENU)IDC_STATUS_DOT, NULL, NULL);
         g_lblStatus = CreateWindowExW(0, L"STATIC", L"等待游戏启动…", WS_CHILD | WS_VISIBLE,
             60, 201, 600, 30, hwnd, (HMENU)IDC_STATUS_LBL, NULL, NULL);
         SendMessageW(g_lblStatus, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
 
-        
-        g_chkChaos = CreateWindowExW(0, L"BUTTON", L"混乱模式",
-            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, W - 165 - 19, 292, 165, 33, hwnd, (HMENU)IDC_CHAOS, NULL, NULL);
-        
+
+        {
+            HDC hdc = GetDC(g_btnStart);
+            HFONT old = (HFONT)SelectObject(hdc, g_fontUI);
+            SIZE sz;
+            wchar_t chkText[] = L"混乱模式";
+            GetTextExtentPoint32W(hdc, chkText, 4, &sz);
+            SelectObject(hdc, old);
+            ReleaseDC(g_btnStart, hdc);
+            int cw = sz.cx + 30;
+            g_chkChaos = CreateWindowExW(0, L"BUTTON", L"混乱模式",
+                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, bx + 600 - cw, 292, cw, 33, hwnd, (HMENU)IDC_CHAOS, NULL, NULL);
+        }
+
         SendMessageW(g_chkChaos, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
         Subclass(g_btnStart);
         Subclass(g_chkChaos);
 
-        
+
         g_lblHint = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
             30, 296, W - 184 - 40, 26, hwnd, (HMENU)IDC_HINT_LBL, NULL, NULL);
         SendMessageW(g_lblHint, WM_SETFONT, (WPARAM)g_fontUI, TRUE);
 
-        
+
         memset(&g_nid, 0, sizeof(g_nid));
         g_nid.cbSize = sizeof(g_nid);
         g_nid.hWnd = hwnd;
@@ -663,7 +711,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             HDC hdc = di->hDC;
             RECT r = di->rcItem;
             BOOL down = (di->itemState & ODS_SELECTED) != 0;
-            HBRUSH br = CreateSolidBrush(down ? COL_ACCENT_H : COL_ACCENT);
+            HBRUSH br = CreateSolidBrush(down ? COL_ACCENT_H : (g_btnHover ? COL_ACCENT_HV : COL_ACCENT));
             FillRect(hdc, &r, br);
             DeleteObject(br);
             SetBkMode(hdc, TRANSPARENT);
@@ -675,6 +723,9 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             HDC hdc = di->hDC;
             RECT r = di->rcItem;
             COLORREF c = (di->CtlID == IDC_BNET_DOT) ? g_bnetColor : g_statusColor;
+            HBRUSH bg = CreateSolidBrush(COL_BG);
+            FillRect(hdc, &r, bg);
+            DeleteObject(bg);
             HBRUSH br = CreateSolidBrush(c);
             HPEN pen = CreatePen(PS_NULL, 0, 0);
             HGDIOBJ ob = SelectObject(hdc, br);
@@ -703,7 +754,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     case WM_KEYDOWN: {
-        
+
         const wchar_t *k = NULL;
         switch (wp) {
             case VK_UP: k = L"up"; break;
@@ -723,11 +774,11 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     case WM_ACTIVATE:
-        
+
         if (LOWORD(wp) != WA_INACTIVE) SetFocus(hwnd);
         return 0;
     case WM_LBUTTONDOWN:
-        
+
         SetFocus(hwnd);
         break;
     case WM_GETMINMAXINFO: {
@@ -752,7 +803,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     case WM_CLOSE:
-        
+
         ShowWindow(hwnd, SW_HIDE);
         TrayShow();
         return 0;
@@ -801,11 +852,11 @@ static LRESULT CALLBACK LogWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrev, LPWSTR lpCmd, int nShow) {
-    
+int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
+
     HMODULE u32 = GetModuleHandleW(L"user32.dll");
     if (u32) {
-        BOOL (WINAPI *sda)(void*) = (BOOL(WINAPI*)(void*))GetProcAddress(u32, "SetProcessDpiAwarenessContext");
+        BOOL (WINAPI *sda)(void*) = (BOOL(WINAPI*)(void*))(void*)GetProcAddress(u32, "SetProcessDpiAwarenessContext");
         if (sda) sda((void*)-4);
     }
     srand((unsigned)time(NULL) ^ GetCurrentProcessId());
@@ -826,11 +877,23 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrev, LPWSTR lpCmd, int nShow) {
     RegisterClassW(&wc2);
 
     HWND hwnd = CreateWindowExW(0, L"CNWoWPatcherMain", L"CN-WoW Patcher   " APP_VER L"   Author: " APP_AUTH,
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT, 720, 400, NULL, NULL, hInst, NULL);
     if (!hwnd) return 0;
+    {
+        HMODULE dwm = LoadLibraryW(L"dwmapi.dll");
+        if (dwm) {
+            HRESULT (WINAPI *dwa)(HWND, DWORD, const void*, DWORD) =
+                (HRESULT(WINAPI*)(HWND,DWORD,const void*,DWORD))(void*)GetProcAddress(dwm, "DwmSetWindowAttribute");
+            if (dwa) {
+                int pref = 2;
+                dwa(hwnd, 33, &pref, sizeof(pref));
+            }
+            FreeLibrary(dwm);
+        }
+    }
     ShowWindow(hwnd, SW_SHOW);
-    
+
     {
         int sw = GetSystemMetrics(SM_CXSCREEN);
         int sh = GetSystemMetrics(SM_CYSCREEN);

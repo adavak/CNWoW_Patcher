@@ -10,13 +10,31 @@
 - **战网检测**：未运行仅提示（可启动但只能看登录界面）
 - **游戏路径自动侦测**：运行中进程 → 注册表（卸载表 InstallLocation / Blizzard 键）
 - **托盘**：关闭窗口隐藏到右下角，右键菜单彻底退出
-- **多进程 patch**（当前建议单进程使用）
+- **多进程 patch**（支持多开，每个进程独立处理）
 
 ## 使用
+
+### C 版（推荐）
 
 双击 `CN-WoW Patcher.exe`（无需安装任何运行时），点「进入游戏」或自行通过战网启动游戏，状态区变绿「已生效」即可。
 
 注意：支持多开，每个进程独立处理；若多开或重开后未生效，请反馈。
+
+### Python 版（参考）
+
+环境要求：Python 3.8+（自带 tkinter），依赖 [pystray](https://pypi.org/project/pystray/)、[pillow](https://pypi.org/project/pillow/)、[pywin32](https://pypi.org/project/pywin32/)：
+
+```sh
+pip install pystray pillow pywin32
+```
+
+运行（双击或命令行均可）：
+
+```sh
+pythonw "CN-WoW Patcher.pyw"
+```
+
+功能与 C 版一致：WMI 事件驱动侦测游戏启动（非管理员自动回退轮询），自动启用 DPI 感知，界面布局与 C 版对齐。
 
 ## 编译
 

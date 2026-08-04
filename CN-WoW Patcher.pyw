@@ -53,12 +53,13 @@ TEXT = "#f8f8f8"
 MUTED = "#8f96a3"
 ACCENT = "#0074e0"
 ACCENT_H = "#44a4fc"
+ACCENT_HV = "#1f8af0"
 GREEN = "#35c47a"
 ORANGE = "#e8943a"
 GRAY = "#5c6470"
 GOLD = "#ffd700"
-FONT = ("Segoe UI", "Microsoft YaHei UI")
-APP_VER = "v1.4.1"
+FONT = "Microsoft YaHei UI"
+APP_VER = "v1.5"
 APP_AUTHOR = "Adavak"
 PREFIX = b"\x64\x62\x96"
 KEY_SEQ = ("up", "up", "down", "down", "left", "right", "left", "right", "b", "a")
@@ -216,11 +217,10 @@ class App:
         self.root = root
         root.title("CN-WoW Patcher   " + APP_VER + "   Author: " + APP_AUTHOR)
         root.resizable(False, False)
-        root.tk.call("tk", "scaling", 1.333)
+        root.tk.call("tk", "scaling", root.winfo_fpixels("1i") / 72.0)
         root.configure(bg=BG)
 
         self.game_running = False
-        self.patched = 0
         self.last_pids = set()
         self.last_value = 11
         self.jackpot = 0
@@ -232,44 +232,49 @@ class App:
         self.last_chaos = False
         self.patched_pids = set()
         self.proc_start = {}
+        self.last_bnet = None
+        self.last_status = None
+        self.last_status_color = None
 
-        root.geometry("464x228")
+        root.geometry("714x360")
 
-        tk.Label(root, text="通过战网或点击下面按钮启动游戏", font=(FONT, -12),
-                 bg=BG, fg=MUTED).place(relx=0.5, y=14, anchor="n", width=464, height=20)
+        tk.Label(root, text="通过战网或点击下面按钮启动游戏", font=(FONT, -18),
+                 bg=BG, fg=MUTED).place(relx=0.5, y=21, anchor="n", width=720, height=30)
 
-        self.bnet_dot = tk.Canvas(root, width=12, height=12, bg=BG, highlightthickness=0)
-        self.bnet_dot.place(x=20, y=50)
-        self.bnet_dot_id = self.bnet_dot.create_oval(1, 1, 11, 11, fill=GRAY, outline="")
+        self.bnet_dot = tk.Canvas(root, width=18, height=18, bg=BG, highlightthickness=0)
+        self.bnet_dot.place(x=30, y=75)
+        self.bnet_dot_id = self.bnet_dot.create_oval(2, 2, 17, 17, fill=GRAY, outline="")
         self.bnet_var = tk.StringVar(value="战网：检测中…")
-        tk.Label(root, textvariable=self.bnet_var, font=(FONT, -14),
-                 bg=BG, fg=TEXT, anchor="w").place(x=40, y=46, width=200, height=20)
+        tk.Label(root, textvariable=self.bnet_var, font=(FONT, -21),
+                 bg=BG, fg=TEXT, anchor="w").place(x=60, y=69, width=300, height=30)
 
         self.start_btn = tk.Button(root, text="▶  进入游戏",
-                                   font=(FONT, -16, "bold"),
+                                   font=(FONT, -24, "bold"),
                                    bg=ACCENT, fg="white", activebackground=ACCENT_H,
                                    activeforeground="white", relief="flat", bd=0,
-                                   cursor="hand2", padx=10, pady=12)
-        self.start_btn.place(x=40, y=76, width=400, height=46)
-        self.start_btn.bind("<Enter>", lambda e: self.start_btn.config(bg=ACCENT_H))
+                                   cursor="hand2", padx=15, pady=18)
+        self.start_btn.place(x=60, y=114, width=600, height=69)
+        self.start_btn.bind("<Enter>", lambda e: self.start_btn.config(bg=ACCENT_HV))
         self.start_btn.bind("<Leave>", lambda e: self.start_btn.config(bg=ACCENT))
         self.start_btn.config(command=self.launch_game)
 
-        self.status_dot = tk.Canvas(root, width=12, height=12, bg=BG, highlightthickness=0)
-        self.status_dot.place(x=20, y=138)
-        self.status_dot_id = self.status_dot.create_oval(1, 1, 11, 11, fill=GRAY, outline="")
+        self.status_dot = tk.Canvas(root, width=18, height=18, bg=BG, highlightthickness=0)
+        self.status_dot.place(x=30, y=207)
+        self.status_dot_id = self.status_dot.create_oval(2, 2, 17, 17, fill=GRAY, outline="")
         self.status_var = tk.StringVar(value="等待游戏启动…")
-        tk.Label(root, textvariable=self.status_var, font=(FONT, -14),
-                 bg=BG, fg=TEXT, anchor="w").place(x=40, y=134, width=400, height=20)
+        tk.Label(root, textvariable=self.status_var, font=(FONT, -21),
+                 bg=BG, fg=TEXT, anchor="w").place(x=60, y=201, width=600, height=30)
 
         self.chaos_var = tk.BooleanVar(value=False)
         chaos_cb = tk.Checkbutton(root, text="混乱模式", variable=self.chaos_var,
                                   bg=BG, fg=TEXT, activebackground=BG, activeforeground=ACCENT_H,
-                                  selectcolor=PANEL, font=(FONT, -14), cursor="hand2")
-        chaos_cb.place(x=357, y=195, width=110, height=22)
+                                  selectcolor=PANEL, font=(FONT, -21), cursor="hand2")
+        chaos_cb.update_idletasks()
+        cw = chaos_cb.winfo_reqwidth()
+        chaos_cb.place(x=660 - cw, y=292, width=cw, height=33)
 
-        self.hint_lbl = tk.Label(root, text="", font=(FONT, -14), bg=BG, fg=GOLD, anchor="w")
-        self.hint_lbl.place(x=20, y=197, width=331, height=17)
+        self.hint_lbl = tk.Label(root, text="", font=(FONT, -21), bg=BG, fg=GOLD, anchor="w")
+        self.hint_lbl.place(x=30, y=296, width=496, height=26)
 
         self.log_text = None
         self.log_win = None
@@ -371,7 +376,7 @@ class App:
         self.log_win.configure(bg=PANEL)
         self.log_win.protocol("WM_DELETE_WINDOW", self.close_log_win)
         self.log_text = tk.Text(self.log_win, width=60, height=20, bg=PANEL, fg=TEXT,
-                                font=(FONT, -14), state="disabled", relief="flat", bd=0)
+                                font=(FONT, -21), state="disabled", relief="flat", bd=0)
         self.log_text.pack(fill="both", expand=True)
         self.append_log("秘籍生效！Log 模式开启")
 
@@ -393,31 +398,36 @@ class App:
             self.log_text.config(state="disabled")
 
     def refresh_ui(self):
-        if battle_net_running():
-            self.bnet_var.set("战网：运行中")
-            self.bnet_dot.itemconfig(self.bnet_dot_id, fill=GREEN)
-            self.hint_lbl.config(text="多开/重开后若未生效，请反馈", fg=GOLD)
-        else:
-            self.bnet_var.set("战网：未运行")
-            self.bnet_dot.itemconfig(self.bnet_dot_id, fill=GRAY)
-            self.hint_lbl.config(text="⚠ 战网未运行，仅可查看登录界面", fg=ORANGE)
+        bnet = battle_net_running()
+        if bnet != self.last_bnet:
+            self.last_bnet = bnet
+            if bnet:
+                self.bnet_var.set("战网：运行中")
+                self.bnet_dot.itemconfig(self.bnet_dot_id, fill=GREEN)
+                self.hint_lbl.config(text="多开/重开后若未生效，请反馈", fg=GOLD)
+            else:
+                self.bnet_var.set("战网：未运行")
+                self.bnet_dot.itemconfig(self.bnet_dot_id, fill=GRAY)
+                self.hint_lbl.config(text="⚠ 战网未运行，仅可查看登录界面", fg=ORANGE)
 
         if self.game_running:
             if self.jackpot == 1:
-                self.status_var.set("你中奖了，扎昆守护着你！(版本 → 7.0)")
-                self.status_dot.itemconfig(self.status_dot_id, fill=GOLD)
+                status, color = "你中奖了，扎昆守护着你！(版本 → 7.0)", GOLD
             elif self.jackpot == 2:
-                self.status_var.set("龙飞走了，堡垒化了…(版本 → 3.0)")
-                self.status_dot.itemconfig(self.status_dot_id, fill=GOLD)
+                status, color = "龙飞走了，堡垒化了…(版本 → 3.0)", GOLD
             elif self.jackpot == 3:
-                self.status_var.set("光源远征了…(版本 → 2.0)")
-                self.status_dot.itemconfig(self.status_dot_id, fill=GOLD)
+                status, color = "光源远征了…(版本 → 2.0)", GOLD
             else:
-                self.status_var.set("已生效 · 载入界面版本 → %d.0" % (self.last_value + 1))
-                self.status_dot.itemconfig(self.status_dot_id, fill=GREEN)
+                status = "已生效 · 载入界面版本 → %d.0" % (self.last_value + 1)
+                color = GREEN
         else:
-            self.status_var.set("等待游戏启动…")
-            self.status_dot.itemconfig(self.status_dot_id, fill=GRAY)
+            status, color = "等待游戏启动…", GRAY
+        if status != self.last_status:
+            self.last_status = status
+            self.status_var.set(status)
+        if color != self.last_status_color:
+            self.last_status_color = color
+            self.status_dot.itemconfig(self.status_dot_id, fill=color)
         self.root.after(200, self.refresh_ui)
 
     def tick(self):
@@ -453,7 +463,6 @@ class App:
                         if cnt:
                             self.append_log("pid %d: 已修改 %d 处 → 值 %d" % (pid, cnt, val))
                             self.patched_pids.add(pid)
-                    self.patched = sum(r[1] for r in res)
                     self.last_value = res[-1][2]
                     jp = 0
                     for pid, cnt, val in res:
@@ -475,7 +484,6 @@ class App:
             if self.last_pids:
                 self.append_log("游戏进程已退出")
             self.last_pids = set()
-            self.patched = 0
             self.targets = {}
             self.patched_pids = set()
             self.proc_start = {}
@@ -519,6 +527,13 @@ class App:
                 time.sleep(1)
 
 def main():
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
     root = tk.Tk()
     App(root)
     root.mainloop()
