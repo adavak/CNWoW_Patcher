@@ -14,6 +14,10 @@
 #include <string.h>
 #include <time.h>
 
+#ifndef min
+#define min(a, b) ((a) < (b) ? (a) : (b))
+#endif
+
 #ifdef _MSC_VER
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "kernel32.lib")
@@ -35,7 +39,7 @@
 #define COL_ORANGE   RGB(0xE8,0x94,0x3A)
 #define COL_GRAY     RGB(0x5C,0x64,0x70)
 #define COL_GOLD     RGB(0xFF,0xD7,0x00)
-#define APP_VER  L"v1.5"
+#define APP_VER  L"v1.6"
 #define APP_AUTH L"Adavak"
 
 #define IDC_BNET_DOT   1001

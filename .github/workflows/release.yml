@@ -29,16 +29,21 @@ jobs:
           gcc -O2 -s -municode -finput-charset=UTF-8 -o "CN-WoW Patcher.exe" src/patcher.c resource.o -luser32 -lkernel32 -ladvapi32 -lshell32 -lcomctl32 -lole32 -loleaut32 -lwbemuuid -mwindows
           Get-Item "CN-WoW Patcher.exe" | Select-Object Length
 
-      - name: Package zip
+      - name: Checksums
         shell: pwsh
         run: |
+          $exeSha = (Get-FileHash "CN-WoW Patcher.exe" -Algorithm SHA256).Hash
           $tag = $env:GITHUB_REF_NAME
           Compress-Archive -Path "CN-WoW Patcher.exe","README.md" -DestinationPath "CNWoW_Patcher-$tag.zip"
+          echo "exe_sha=$exeSha" >> $env:GITHUB_OUTPUT
+        id: checksums
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           name: CN-WoW Patcher ${{ github.ref_name }}
+          body: |
+            **CN-WoW Patcher.exe**  SHA256: `${{ steps.checksums.outputs.exe_sha }}`
           generate_release_notes: true
           files: |
             CNWoW_Patcher-*.zip

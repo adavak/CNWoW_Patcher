@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """生成 CN-WoW Patcher LOGO v3：12 几乎填充整个正方形"""
+import os
 from PIL import Image, ImageDraw, ImageFont
 
 SIZE = 1024
@@ -37,10 +38,10 @@ y = (SIZE - th) // 2 - bbox[1]
 d.text((x + SIZE // 60, y + SIZE // 60), '12', font=font, fill=(0, 0, 0, 110))
 d.text((x, y), '12', font=font, fill=(255, 255, 255, 255))
 
-out_dir = r'C:\Users\Adavak\Documents\GitHub\CNWoW_Patcher'
-img.save(out_dir + r'\logo_1024.png')
-img.resize((512, 512), Image.LANCZOS).save(out_dir + r'\logo_512.png')
+out_dir = os.path.dirname(os.path.abspath(__file__))
+img.save(os.path.join(out_dir, 'logo_1024.png'))
+img.resize((512, 512), Image.LANCZOS).save(os.path.join(out_dir, 'logo_512.png'))
 img.resize((256, 256), Image.LANCZOS).save(
-    out_dir + r'\CNWoW.ico',
+    os.path.join(out_dir, 'CNWoW.ico'),
     sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
 print('LOGO v3 已生成（12 填满）')

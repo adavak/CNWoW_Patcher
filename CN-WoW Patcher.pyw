@@ -59,7 +59,8 @@ ORANGE = "#e8943a"
 GRAY = "#5c6470"
 GOLD = "#ffd700"
 FONT = "Microsoft YaHei UI"
-APP_VER = "v1.5"
+_FONT_PATH = os.path.join(os.environ["WINDIR"], "Fonts", "segoeuib.ttf")
+APP_VER = "v1.6"
 APP_AUTHOR = "Adavak"
 PREFIX = b"\x64\x62\x96"
 KEY_SEQ = ("up", "up", "down", "down", "left", "right", "left", "right", "b", "a")
@@ -295,7 +296,7 @@ class App:
         img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
         d.rounded_rectangle([2, 2, 62, 62], radius=10, fill=(0, 116, 224, 255))
-        d.text((14, 8), "12", font=ImageFont.truetype(r"C:\Windows\Fonts\segoeuib.ttf", 40),
+        d.text((14, 8), "12", font=ImageFont.truetype(_FONT_PATH, 40),
                fill=(255, 255, 255, 255))
         return pystray.Icon(
             "wow_locale_patcher", img, "CN-WoW Patcher   " + APP_VER + "   Author: " + APP_AUTHOR,
