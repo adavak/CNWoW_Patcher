@@ -60,7 +60,7 @@ GRAY = "#5c6470"
 GOLD = "#ffd700"
 FONT = "Microsoft YaHei UI"
 _FONT_PATH = os.path.join(os.environ["WINDIR"], "Fonts", "segoeuib.ttf")
-APP_VER = "v1.6"
+APP_VER = "v1.7"
 APP_AUTHOR = "Adavak"
 PREFIX = b"\x64\x62\x96"
 KEY_SEQ = ("up", "up", "down", "down", "left", "right", "left", "right", "b", "a")
@@ -232,6 +232,7 @@ class App:
         self.word_buf = []
         self.last_chaos = False
         self.patched_pids = set()
+        self.patch_deadline = {}
         self.proc_start = {}
         self.last_bnet = None
         self.last_status = None
@@ -443,12 +444,14 @@ class App:
                 if pid in self.proc_start and self.proc_start[pid] != st:
                     self.patched_pids.discard(pid)
                     self.targets.pop(pid, None)
+                    self.patch_deadline.pop(pid, None)
                 self.proc_start[pid] = st
             chaos = self.chaos_var.get()
             if chaos != self.last_chaos:
                 self.last_chaos = chaos
                 self.targets = {}
                 self.patched_pids = set()
+                self.patch_deadline = {}
             if chaos:
                 for pid in pids:
                     if pid not in self.targets:
@@ -456,7 +459,11 @@ class App:
                 self.targets = {p: t for p, t in self.targets.items() if p in pids}
             else:
                 self.targets = {p: 11 for p in pids}
-            need = bool(new_pids - self.patched_pids)
+            now = time.time()
+            for pid in pids:
+                if pid not in self.patch_deadline:
+                    self.patch_deadline[pid] = now + 15.0
+            need = any(pid not in self.patched_pids or now < self.patch_deadline.get(pid, 0) for pid in pids)
             if need:
                 res = patch_all(self.targets)
                 if res:
@@ -487,6 +494,7 @@ class App:
             self.last_pids = set()
             self.targets = {}
             self.patched_pids = set()
+            self.patch_deadline = {}
             self.proc_start = {}
             self.jackpot = 0
 

@@ -39,7 +39,7 @@
 #define COL_ORANGE   RGB(0xE8,0x94,0x3A)
 #define COL_GRAY     RGB(0x5C,0x64,0x70)
 #define COL_GOLD     RGB(0xFF,0xD7,0x00)
-#define APP_VER  L"v1.6"
+#define APP_VER  L"v1.7"
 #define APP_AUTH L"Adavak"
 
 #define IDC_BNET_DOT   1001
@@ -75,7 +75,8 @@ static BOOL g_thrRunning = TRUE;
 static const unsigned char PREFIX[3] = { 0x64, 0x62, 0x96 };
 
 #define MAX_PROC 16
-static struct { DWORD pid; ULONGLONG startTime; int target; int wasChaos; } g_targets[MAX_PROC];
+#define PATCH_SETTLE_MS 15000
+static struct { DWORD pid; ULONGLONG startTime; int target; int wasChaos; ULONGLONG settleUntil; } g_targets[MAX_PROC];
 static int g_targetCount = 0;
 static DWORD g_done[MAX_PROC];
 static int g_doneN = 0;
@@ -134,11 +135,6 @@ static ULONGLONG GetProcStartTime(DWORD pid) {
         t = ((ULONGLONG)ct.dwHighDateTime << 32) | ct.dwLowDateTime;
     CloseHandle(h);
     return t;
-}
-
-static BOOL IsPidDone(DWORD pid) {
-    for (int d = 0; d < g_doneN; d++) if (g_done[d] == pid) return TRUE;
-    return FALSE;
 }
 
 static BOOL BattleNetRunning(void) {
@@ -301,12 +297,14 @@ static void PatchAll(void) {
                 g_targets[g_targetCount].startTime = st;
                 g_targets[g_targetCount].target = chaos ? (rand() % 12) : 11;
                 g_targets[g_targetCount].wasChaos = chaos;
+                g_targets[g_targetCount].settleUntil = GetTickCount64() + PATCH_SETTLE_MS;
                 g_targetCount++;
             }
         } else if (g_targets[j].startTime != st) {
             g_targets[j].startTime = st;
             g_targets[j].target = chaos ? (rand() % 12) : 11;
             g_targets[j].wasChaos = chaos;
+            g_targets[j].settleUntil = GetTickCount64() + PATCH_SETTLE_MS;
             for (int d = 0; d < g_doneN; d++) if (g_done[d] == pids[i]) { g_done[d] = g_done[--g_doneN]; break; }
         }
     }
@@ -316,16 +314,18 @@ static void PatchAll(void) {
         if (g_targets[i].wasChaos != chaos) {
             g_targets[i].target = chaos ? (rand() % 12) : 11;
             g_targets[i].wasChaos = chaos;
+            g_targets[i].settleUntil = GetTickCount64() + PATCH_SETTLE_MS;
             need = TRUE;
         }
         BOOL done = FALSE;
         for (int d = 0; d < g_doneN; d++) if (g_done[d] == g_targets[i].pid) { done = TRUE; break; }
-        if (!done) need = TRUE;
+        BOOL settled = GetTickCount64() >= g_targets[i].settleUntil;
+        if (!done || !settled) need = TRUE;
         if (need) {
             int c = PatchPid(g_targets[i].pid, g_targets[i].target);
             if (c > 0) {
                 LogMsg(L"pid %lu: 已修改 %d 处 → 值 %d", g_targets[i].pid, c, g_targets[i].target);
-                if (g_doneN < MAX_PROC) g_done[g_doneN++] = g_targets[i].pid;
+                if (!done && g_doneN < MAX_PROC) g_done[g_doneN++] = g_targets[i].pid;
             }
         }
         if (g_targets[i].target == 6) jp = 1;
@@ -423,7 +423,7 @@ static DWORD WINAPI WmiThread(LPVOID) {
             obj->lpVtbl->Release(obj);
             for (int a = 0; a < 8 && g_thrRunning; a++) {
                 PatchAll();
-                if (started == 0 || IsPidDone(started)) break;
+                if (started == 0) break;
                 Sleep(250);
             }
         } else if (hr2 == WBEM_S_TIMEDOUT) {
